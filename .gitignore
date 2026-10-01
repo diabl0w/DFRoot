@@ -8,6 +8,7 @@ app/.cxx/
 local.properties
 *.iml
 .idea/
+__pycache__/
 dirtyfrag-lkm/*.cmd
 dirtyfrag-lkm/*.o
 dirtyfrag-lkm/*.mod

