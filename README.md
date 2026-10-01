@@ -24,7 +24,10 @@ Credits:
 
 ## Supported Devices
 
-Ephemeral root for Samsung devices (and possibly others) w/ locked bootloaders vulnerable to DirtyFrag (CVE-2026-43284) 
+Ephemeral root for compatible Android devices with locked bootloaders that are
+vulnerable to DirtyFrag (CVE-2026-43284). Vendor kernels used by Android-based
+XR devices often differ from phone GKI builds even when their Android and Linux
+versions look similar, so compatibility is established per exact firmware.
 
 | KMI Version | Verified |
 |---|---|
@@ -37,11 +40,51 @@ Ephemeral root for Samsung devices (and possibly others) w/ locked bootloaders v
 | android16-6.12 | Yes |
 | android17-6.18 | Untested |
 
+## Compatibility preflight and new firmware ports
+
+Run the read-only preflight before attempting the payload:
+
+```sh
+python3 tools/device_preflight.py ADB_SERIAL
+```
+
+It reports the full build identity, Android API, kernel release and KMI tag,
+SELinux state, required paths, readable carrier hashes, relevant kernel config,
+and module-signature policy. Exit code 2 means a prerequisite is known to be
+absent. Exit code 3 means a required property remains unverified. A clean
+preflight does not prove that DirtyFrag is present or that the modified module
+will load.
+
+Keep these compatibility gates separate when adding a firmware:
+
+1. **Exact target identity.** Record the full build fingerprint, incremental
+   build, kernel release, and hashes of the boot/kernel image and chosen carrier.
+   Validate expected carrier bytes before writing them.
+2. **Kernel module identity.** Use only an exact Android KMI module. Never fall
+   back to a module that merely shares the same Linux major/minor version.
+   Vendor non-GKI kernels need an exact-build module with matching vermagic,
+   symbol CRCs, struct layout, and control-flow integrity compatible symbol
+   resolution.
+3. **Primitive.** Prove the page-cache write on a harmless scratch target for
+   the exact build. Successful offline offset extraction is not this proof.
+4. **Loader path.** Verify the actual paths, SELinux transitions, carrier size
+   and label, and read back the complete poisoned module before triggering it.
+5. **Module policy.** Treat `CONFIG_MODULE_SIG_FORCE=y`,
+   `kernel.modules_disabled=1`, or an observed `finit_module` signature error as
+   a hard blocker for this module-based chain. If the config is unavailable or
+   enforcement is not forced there, keep the result unverified until a harmless
+   equivalently modified exact-build module reaches the same loader path.
+6. **Outcome.** Report UID, SELinux domain, SELinux enforcing state, module
+   state, and KernelSU availability separately. A UID 0 userspace process does
+   not by itself prove unrestricted kernel access or persistent root.
+
 ## How it works
 
 The Android kernel decrypts AES-CBC ESP packets directly into the page cache of files open for `splice()`. By crafting `IV = AES_ECB_DEC(key, current_content) ⊕ desired_content`, any 16-byte-aligned block in a mapped shared library can be overwritten without write permission and without copy-on-write.
 
-The exploit uses this primitive to patch shellcode into `libc++.so` and `libc.so` in the kernel's page cache. The next privileged call to those functions runs the shellcode and installs KernelSU.
+The exploit uses this primitive to patch shellcode into `libc++.so` in the
+kernel's page cache. The next privileged call to that function runs the
+shellcode, loads the bundled module, and installs KernelSU.
 
 ### Exploit chain
 
@@ -51,15 +94,14 @@ The exploit uses this primitive to patch shellcode into `libc++.so` and `libc.so
 
 3. **dirtyfrag.ko → libbinderdebug.so** — The kernel module is written into `/vendor/lib64/libbinderdebug.so` with `vendor_file` label that can be modprobe'd
 
-4. **libc++ hook** (runs in init, uid=0, tid=1) — entrypoint via createorphanprocess. patched with shellcode that forks, sets the child's SELinux exec context to `u:r:vendor_modprobe:s0`, and execs `/vendor/bin/modprobe`.
+4. **libc++ hook** (runs in init, uid=0, tid=1) — the patched function invokes
+   `/vendor/bin/insmod` on the poisoned carrier.
 
-5. **libc hook** (runs in vendor_modprobe, uid=0) — Shellcode patched into `__libc_init`. When vendor_modprobe starts:
-   - Calls `finit_module` to load dirtyfrag.ko
-   - Opens ksud from the app's memfd via `/proc/<pid>/fd/<n>`, copies to `/dev/.ksud` and `/data/system/ksud`
-   - Unshares mount namespace, bind-mounts `/dev/.ksud` over `/system/bin/logcat` (DEFEX bypass via trusted path)
-   - Forks and execs ksud through the bind-mounted path
+5. **Kernel module** — the module changes the required kernel state and starts
+   the staged KernelSU daemon.
 
-6. **KernelSU daemon launched** — libc/libc++ patches are restored and crash_dump64 is fadvised out of cache.
+6. **Cleanup** — the libc++ patch is restored and crash_dump64 is advised out
+   of the page cache.
 
 ## Usage
 
@@ -70,4 +112,3 @@ https://github.com/tiann/KernelSU/actions/runs/35973514328
 ./build.sh
 adb install -r dirtyfrag.apk
 ```
-
