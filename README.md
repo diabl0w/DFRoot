@@ -48,6 +48,17 @@ Run the read-only preflight before attempting the payload:
 python3 tools/device_preflight.py ADB_SERIAL
 ```
 
+Use `--format text` for a concise operator report. The default JSON form is
+intended for scripts and agent handoffs. When an exact-build symbol map and raw
+uncompressed kernel Image are available, pass them explicitly:
+
+```sh
+python3 tools/device_preflight.py ADB_SERIAL \
+  --symbol-map /path/to/System.map \
+  --kernel-image /path/to/Image \
+  --format text
+```
+
 It reports the full build identity, Android API, kernel release and KMI tag,
 SELinux state, configured and alternative paths, readable file hashes, a
 bounded summary of shell-visible carrier labels, relevant kernel config, and
@@ -57,13 +68,40 @@ probes. Exit code 2 means a prerequisite is known to be absent. Exit code 3
 means a required property remains unverified. A clean preflight does not prove
 that DirtyFrag is present or that the modified module will load.
 
+### Scratch-only primitive proof
+
+The app's **Probe Primitive (Scratch Only)** action tests the DirtyFrag write
+against a newly created 4096-byte file in the app's private data directory. It
+writes one known 16-byte block through the XFRM/ESP path, compares the observed
+bytes, restores the original bytes through the ordinary owned-file path,
+flushes and reopens the file, verifies the restoration, and deletes the file.
+It does not patch a system or vendor file and does not attempt to load a module.
+
+After running the action, rerun `device_preflight.py`. The tool reads the
+machine-readable result with `run-as`, verifies that its full build fingerprint
+and kernel release match the connected device, and reports the before,
+requested/observed, and reopened-after-restore byte strings. A confirmed result
+establishes only the page-cache write primitive on that exact running firmware;
+it does not establish a privileged trigger, root, module compatibility, module
+signature acceptance, or persistence.
+
+The symbol report keeps offline addresses, `_text`-relative offsets, raw Image
+byte windows, the live KASLR base, and computed live addresses separate. A byte
+window is useful only when the Image hash and its file-offset mapping are both
+verified. An offline offset must never be printed as a live address. For data
+symbols such as `selinux_state`, also verify the exact-build structure layout
+and field offset; finding the symbol does not identify which byte controls the
+intended field.
+
 Path states are intentionally three-valued: `visible`, `absent`, or
 `permission_denied`. Android may hide a real vendor file from the ADB shell,
 so the last state must not be reported as absence. Likewise, the carrier scan
-is only a bounded view of top-level files visible from the shell. Never select
-a carrier automatically from that list: verify its size, contents, SELinux
-type, loader-domain permission, complete readback, and restoration from the
-actual privileged execution path.
+is only a view of top-level files visible from the shell and may be bounded by
+`--carrier-scan-limit`. The runtime selector logs the size and SELinux label of
+each configured candidate and rejects candidates whose label is incompatible
+with the hard-coded loader domain. Before adding a new candidate, verify its
+contents, type, loader-domain permission, complete readback, and restoration
+from the actual privileged execution path.
 
 The report also separates common dynamic loader results. An SELinux
 `module_load` denial means the signature verifier was not yet reached;

