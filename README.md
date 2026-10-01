@@ -109,6 +109,17 @@ The report also separates common dynamic loader results. An SELinux
 back to exact kernel identity, vermagic, symbol CRCs, architecture, structure
 layout, or CFI assumptions.
 
+For vendor non-GKI builds or blocked module carriers, the report also lists
+standard executables that can be started as fresh processes. These are
+metadata-only candidates. A useful test extracts the exact protected binary
+when policy hides it, pins its full hash and executable prefix, applies a
+bounded harmless payload, triggers one fresh process, and restores every byte.
+Record the process UID, capabilities, SELinux domain, and raw syscall results.
+Before restarting a daemon, record every reachable transport and preserve a
+fallback connection. A fresh UID 0 process can still lack the SELinux rules
+needed for PMU, GPU, debugfs, sysctl, or module access, so each interface needs
+its own functional probe.
+
 Keep these compatibility gates separate when adding a firmware:
 
 1. **Exact target identity.** Record the full build fingerprint, incremental

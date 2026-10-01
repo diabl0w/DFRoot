@@ -69,6 +69,27 @@ CONFIG_OPTIONS = (
     "HW_PERF_EVENTS",
 )
 
+FRESH_PROCESS_CARRIERS = (
+    {
+        "name": "adbd",
+        "path": "/system/bin/adbd",
+        "fresh_trigger": "controlled daemon restart with a pre-recorded fallback transport",
+        "use": "verify daemon UID, capabilities, child shell domain, and restoration separately",
+    },
+    {
+        "name": "dumpstate",
+        "path": "/system/bin/dumpstate",
+        "fresh_trigger": "one bounded bugreport request",
+        "use": "probe a fresh diagnostic domain and return evidence through shell-writable storage",
+    },
+    {
+        "name": "crash_dump64",
+        "path": "/system/bin/crash_dump64",
+        "fresh_trigger": "one controlled disposable-process crash",
+        "use": "validate a transient protected-file read bridge before any privileged payload",
+    },
+)
+
 
 def adb_result(serial: str, *args: str, timeout: int = 30) -> subprocess.CompletedProcess:
     return subprocess.run(
@@ -637,6 +658,24 @@ def scan_visible_carriers(
     }
 
 
+def fresh_process_carriers(serial: str) -> list[dict[str, object]]:
+    """Report standard fresh-process candidates without claiming reachability.
+
+    A policy-hidden executable is retained as an unknown candidate. That state
+    tells the next operator to use a validated protected-file read bridge and
+    pin the exact hash, rather than treating the path as absent or guessing an
+    offset from another build.
+    """
+    result = []
+    for candidate in FRESH_PROCESS_CARRIERS:
+        result.append({
+            **candidate,
+            **path_metadata(serial, str(candidate["path"]), fingerprint=True),
+            "candidate_state": "metadata_only_not_executed",
+        })
+    return result
+
+
 def next_step(
     order: int,
     step_id: str,
@@ -755,6 +794,43 @@ def render_text(report: dict[str, object]) -> str:
             f"large_enough={summary['large_enough_count']}"
         )
 
+    lines.extend(("", "FRESH PROCESS CARRIER CANDIDATES"))
+    for candidate in report["fresh_process_carriers"]:
+        lines.append(
+            f"  {candidate['name']}: {candidate['path']} "
+            f"evidence={candidate['candidate_state']} "
+            f"status={candidate.get('status')} "
+            f"label={candidate.get('selinux_label', 'unavailable')} "
+            f"sha256={candidate.get('sha256', 'unavailable')}"
+        )
+        lines.append(f"    trigger: {candidate['fresh_trigger']}")
+        lines.append(f"    prove: {candidate['use']}")
+
+    lines.extend(("", "PROFILING INTERFACE EVIDENCE"))
+    profiling = report["profiling_interfaces"]
+    for name in (
+        "kgsl_device", "kgsl_sysfs", "kgsl_debugfs", "tracefs_events",
+        "simpleperf", "perfetto",
+    ):
+        item = profiling[name]
+        lines.append(
+            f"  {name}: evidence=path_metadata_only "
+            f"path={item.get('path', 'unavailable')} "
+            f"status={item.get('status', 'unavailable')} "
+            f"label={item.get('selinux_label', 'unavailable')} "
+            f"sha256={item.get('sha256', 'unavailable')}"
+        )
+    lines.append(
+        "  gpu_model: "
+        f"status={profiling['gpu_model'].get('status', 'unavailable')} "
+        f"value={profiling['gpu_model'].get('value', 'unavailable')}"
+    )
+    lines.append(
+        "  perf_event_paranoid: "
+        f"status={profiling['perf_event_paranoid'].get('status', 'unavailable')} "
+        f"value={profiling['perf_event_paranoid'].get('value', 'unavailable')}"
+    )
+
     lines.extend(("", "PINNED EVIDENCE"))
     lines.append(
         f"  /proc/config.gz: {config_evidence.get('status')} "
@@ -856,6 +932,7 @@ def main() -> int:
             path_metadata(serial, path, fingerprint=False) for path in loader_paths
         ],
     }
+    process_carriers = fresh_process_carriers(serial)
 
     policy = selinux_policy_probe(serial)
     allowed_carrier_types = {
@@ -964,7 +1041,15 @@ def main() -> int:
     profiling_interfaces = {
         "kgsl_device": path_metadata(serial, "/dev/kgsl-3d0", fingerprint=False),
         "gpu_model": scalar_probe(serial, "/sys/class/kgsl/kgsl-3d0/gpu_model"),
+        "kgsl_sysfs": path_metadata(
+            serial, "/sys/class/kgsl/kgsl-3d0", fingerprint=False
+        ),
         "kgsl_debugfs": path_metadata(serial, "/sys/kernel/debug/kgsl", fingerprint=False),
+        "tracefs_events": path_metadata(
+            serial, "/sys/kernel/tracing/events", fingerprint=False
+        ),
+        "simpleperf": path_metadata(serial, "/system/bin/simpleperf", fingerprint=True),
+        "perfetto": path_metadata(serial, "/system/bin/perfetto", fingerprint=True),
         "perf_event_paranoid": sysctls["perf_event_paranoid"],
     }
 
@@ -1176,6 +1261,29 @@ def main() -> int:
             ],
         ))
         order += 1
+    if device_kmi is None or not compatible_carriers:
+        candidate_evidence = [
+            f"{item['name']} path={item['path']} status={item.get('status')} "
+            f"label={item.get('selinux_label', 'unavailable')} "
+            f"sha256={item.get('sha256', 'unavailable')}"
+            for item in process_carriers
+        ]
+        steps.append(next_step(
+            order, "probe_fresh_privileged_process_domains", "userspace_stage",
+            "alternative_before_kernel_module_work",
+            (
+                "If the objective can be met from a privileged userspace domain, rank fresh "
+                "process carriers before pursuing a new kernel primitive. For each candidate, "
+                "obtain the exact executable through a validated protected-file read bridge "
+                "when shell policy hides it; pin its full hash, executable prefix, SELinux "
+                "entry transition, and repeatable trigger. Run a harmless bounded payload once, "
+                "restore and read back every modified byte, then record UID, capabilities, "
+                "domain, and raw syscall results. Preserve a fallback transport before any "
+                "daemon restart. Metadata or UID 0 alone is not success."
+            ),
+            candidate_evidence,
+        ))
+        order += 1
     if options is not None and options["XFRM"] == "y" \
             and options["INET_ESP"] in ("y", "m") and not scratch_confirmed:
         steps.append(next_step(
@@ -1305,7 +1413,7 @@ def main() -> int:
         module_chain = "unverified"
 
     report = {
-        "schema_version": 2,
+        "schema_version": 3,
         "generated_at_utc": datetime.now(timezone.utc).isoformat(),
         "evidence_legend": {
             "confirmed": "directly read from this device or supplied exact-hash artifact",
@@ -1340,6 +1448,7 @@ def main() -> int:
         },
         "configured_paths": configured_paths,
         "path_candidates": path_candidates,
+        "fresh_process_carriers": process_carriers,
         "carrier_candidates": carriers,
         "carrier_visibility_scan": carrier_scan,
         "selinux_loader_policy": policy,
