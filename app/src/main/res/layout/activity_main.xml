@@ -104,12 +104,6 @@
                 android:layout_height="wrap_content"
                 android:text="Launch Root" />
 
-            <Button
-                android:id="@+id/btnProbe"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:text="Probe Primitive (Scratch Only)" />
-
             <com.google.android.material.materialswitch.MaterialSwitch
                 android:id="@+id/switchManualSoftReboot"
                 android:layout_width="match_parent"

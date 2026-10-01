@@ -45,17 +45,9 @@ public class MainActivity extends AppCompatActivity implements IReporter {
 
         binding.btnRun.setOnClickListener(v -> {
             binding.btnRun.setEnabled(false);
-            binding.btnProbe.setEnabled(false);
             binding.outputView.setText("");
             boolean softReboot = binding.switchManualSoftReboot.isChecked();
             mExec.execute(() -> runExploit(softReboot));
-        });
-
-        binding.btnProbe.setOnClickListener(v -> {
-            binding.btnRun.setEnabled(false);
-            binding.btnProbe.setEnabled(false);
-            binding.outputView.setText("");
-            mExec.execute(this::runScratchProbe);
         });
 
         ComponentName bootReceiver = new ComponentName(this, BootReceiver.class);
@@ -94,21 +86,6 @@ public class MainActivity extends AppCompatActivity implements IReporter {
             report("\nexception: " + e + "\n");
         } finally {
             mMain.post(() -> binding.btnRun.setEnabled(!new File("/dev/df").exists()));
-        }
-    }
-
-    private void runScratchProbe() {
-        try {
-            int rc = ExploitRunner.probeScratch(this, this);
-            report("scratch probe result: rc=" + rc + "\n");
-        } catch (Exception e) {
-            Log.e(TAG, "scratch probe exception", e);
-            report("\nscratch probe exception: " + e + "\n");
-        } finally {
-            mMain.post(() -> {
-                binding.btnRun.setEnabled(!new File("/dev/df").exists());
-                binding.btnProbe.setEnabled(true);
-            });
         }
     }
 }
