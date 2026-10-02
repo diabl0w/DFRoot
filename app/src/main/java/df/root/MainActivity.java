@@ -77,8 +77,16 @@ public class MainActivity extends AppCompatActivity implements IReporter {
         try {
             int rc = ExploitRunner.run(this, this, softReboot);
             String msg = rc == 0 ? "DFRoot: SUCCESS"
-                       : rc == 1 ? "DFRoot FAILED: ksud exited with error"
+                       : rc == 1 ? "DFRoot FAILED: root stage exited with error"
                        : rc == 2 ? "DFRoot FAILED: check logs"
+                       : rc == ExploitRunner.RESULT_WINDOW_RESTORED
+                           ? "Patch window restored; verify the fresh ADB shell UID"
+                       : rc == ExploitRunner.RESULT_UNSUPPORTED
+                           ? "No exact runtime target matched"
+                       : rc == ExploitRunner.RESULT_BUSY
+                           ? "Another root operation is already active"
+                       : rc == ExploitRunner.RESULT_INTERACTION_REQUIRED
+                           ? "This target requires an interactive host trigger"
                        : "DFRoot FAILED: failed to patch files";
             mMain.post(() -> Toast.makeText(this, msg, Toast.LENGTH_LONG).show());
         } catch (Exception e) {

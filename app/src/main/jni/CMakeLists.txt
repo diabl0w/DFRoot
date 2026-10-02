@@ -20,10 +20,25 @@ add_custom_command(
 )
 add_custom_target(splicehelper_bin DEPENDS "${SPLICEHELPER}")
 
-add_library(exp SHARED exp.c libcxx.S elf_parser.c)
+add_library(exp SHARED
+    exp.c
+    reporter.c
+    file_ops.c
+    dirtyfrag_writer.c
+    payloads.c
+    elf_hook.c
+    patch_window.c
+    root_runtime.c
+    target_registry.c
+    targets/adbd_fd30e626.c
+    targets/adbd_e52b5144.c
+    targets/init_da101ea6.c
+    libcxx.S
+    init_shell.S
+    elf_parser.c)
 add_dependencies(exp splicehelper_bin)
 
-set_source_files_properties(exp.c PROPERTIES OBJECT_DEPENDS
+set_source_files_properties(payloads.c PROPERTIES OBJECT_DEPENDS
     "${CMAKE_SOURCE_DIR}/ko/dirtyfrag-android12-5.10.ko;\
 ${CMAKE_SOURCE_DIR}/ko/dirtyfrag-android13-5.10.ko;\
 ${CMAKE_SOURCE_DIR}/ko/dirtyfrag-android13-5.15.ko;\
@@ -32,6 +47,9 @@ ${CMAKE_SOURCE_DIR}/ko/dirtyfrag-android15-6.6.ko;\
 ${CMAKE_SOURCE_DIR}/ko/dirtyfrag-android16-6.12.ko;\
 ${CMAKE_SOURCE_DIR}/ko/dirtyfrag-android17-6.18.ko;\
 ${CMAKE_SOURCE_DIR}/splicehelper")
+
+set_source_files_properties(init_shell.S PROPERTIES OBJECT_DEPENDS
+    "${CMAKE_SOURCE_DIR}/root-shell.sh")
 
 target_link_libraries(exp log)
 target_link_options(exp PRIVATE -Wl,-z,max-page-size=16384)

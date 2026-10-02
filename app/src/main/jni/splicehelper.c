@@ -7,8 +7,10 @@
 // argv[0] = program name
 // argv[1] = file offset (decimal string)
 // argv[2] = file path
-// argv[3] = optional "r" — read mode: write 16 bytes of file content to fd 0 (OUT_FD)
-//           if absent — splice mode: splice 16 bytes of file page into fd 1 (PIPE_FD)
+// argv[3] = optional mode:
+//           "r" — write 16 bytes of file content to fd 0 (OUT_FD)
+//           "d" — drop the target's clean page-cache pages
+//           absent — splice 16 bytes of file page into fd 1 (PIPE_FD)
 
 #define OUT_FD  0
 #define PIPE_FD 1
@@ -20,6 +22,12 @@ __attribute__((naked)) static long mysyscall1(unsigned long arg0, unsigned long 
 __attribute__((naked)) static long mysyscall3(
     unsigned long a0, unsigned long a1, unsigned long a2, unsigned long nr) {
     asm volatile("mov x8, x3\nsvc 0\nret\n":::"x8");
+}
+
+__attribute__((naked)) static long mysyscall4(
+    unsigned long a0, unsigned long a1, unsigned long a2,
+    unsigned long a3, unsigned long nr) {
+    asm volatile("mov x8, x4\nsvc 0\nret\n":::"x8");
 }
 
 __attribute__((naked)) static long mysyscall6(
@@ -57,16 +65,23 @@ void start_c(void *argblock) {
 
     if (mode && streq(mode, "r")) {
         /* Read mode: lseek to offset, read 16 bytes, write to OUT_FD */
-        /* Exit codes: 0=ok, 1=read<16, 2=write<16, 3=OUT_FD not a pipe (fd sanitized) */
+        /* Exit codes: 0=ok, 1=read<16, 2=write<16, 3=OUT_FD not a pipe */
         mysyscall3((unsigned long)file_fd, (unsigned long)off, SEEK_SET, __NR_lseek);
         unsigned char buf[16];
         long n = mysyscall3((unsigned long)file_fd, (unsigned long)buf, 16, __NR_read);
         if (n != 16)
             mysyscall1(1, __NR_exit_group);
-        if (mysyscall3(OUT_FD, 0, SEEK_CUR, __NR_lseek) != (long)-29L) /* ESPIPE: fd is a pipe */
+        /* lseek on a pipe must fail with -ESPIPE. */
+        if (mysyscall3(OUT_FD, 0, SEEK_CUR, __NR_lseek) != (long)-29L)
             mysyscall1(3, __NR_exit_group);
         long w = mysyscall3(OUT_FD, (unsigned long)buf, 16, __NR_write);
         mysyscall1((unsigned long)(w == 16 ? 0 : 2), __NR_exit_group);
+    }
+
+    if (mode && streq(mode, "d")) {
+        long rc = mysyscall4((unsigned long)file_fd, 0, 0,
+                             POSIX_FADV_DONTNEED, __NR_fadvise64);
+        mysyscall1((unsigned long)(rc == 0 ? 0 : 3), __NR_exit_group);
     }
 
     /* Splice mode: splice 16-byte page into PIPE_FD */
