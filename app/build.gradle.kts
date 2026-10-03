@@ -43,10 +43,6 @@ android {
         checkReleaseBuilds = false
     }
 
-    buildFeatures {
-        viewBinding = true
-    }
-
     externalNativeBuild {
         cmake {
             path("src/main/jni/CMakeLists.txt")
@@ -61,7 +57,4 @@ android {
 }
 
 dependencies {
-    implementation(libs.androidx.appcompat)
-    implementation(libs.material)
-    implementation(libs.androidx.constraintlayout)
 }

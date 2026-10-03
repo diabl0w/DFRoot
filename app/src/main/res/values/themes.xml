@@ -1,4 +1,3 @@
 <resources>
-    <style name="Base.Theme.DirtyFrag" parent="Theme.Material3.DayNight.NoActionBar" />
-    <style name="Theme.DirtyFrag" parent="Base.Theme.DirtyFrag" />
+    <style name="Theme.DirtyFrag" parent="android:Theme.Material.Light.NoActionBar" />
 </resources>
