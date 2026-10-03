@@ -110,6 +110,19 @@
                 android:layout_height="wrap_content"
                 android:text="Auto Soft Reboot" />
 
+            <com.google.android.material.materialswitch.MaterialSwitch
+                android:id="@+id/switchCustomKsud"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Custom ksud (KernelSU)" />
+
+            <Button
+                android:id="@+id/btnSelectKsud"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:textAllCaps="false"
+                android:visibility="gone" />
+
         </LinearLayout>
 
     </com.google.android.material.card.MaterialCardView>
