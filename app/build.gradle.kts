@@ -27,10 +27,12 @@ android {
             isMinifyEnabled = false
         }
     }
-
-    applicationVariants.all {
-        outputs.all {
-            (this as com.android.build.gradle.internal.api.BaseVariantOutputImpl).outputFileName = "dirtyfrag.apk"
+    
+    androidComponents {
+        onVariants { variant ->
+            variant.outputs.forEach { output ->
+                output.outputFileName.set("dirtyfrag.apk")
+            }
         }
     }
 
