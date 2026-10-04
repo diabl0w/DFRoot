@@ -39,6 +39,7 @@ public class MainActivity extends AppCompatActivity implements IReporter {
     private static final String TAG = "dfroot";
 
     private ActivityMainBinding binding;
+    private Context deCtx;
     private final Handler mMain = new Handler(Looper.getMainLooper());
     private final Executor mExec = Executors.newSingleThreadExecutor();
 
@@ -67,6 +68,7 @@ public class MainActivity extends AppCompatActivity implements IReporter {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        deCtx = createDeviceProtectedStorageContext();
         binding = ActivityMainBinding.inflate(getLayoutInflater());
         setContentView(binding.getRoot());
         setSupportActionBar(binding.toolbar);
@@ -92,17 +94,14 @@ public class MainActivity extends AppCompatActivity implements IReporter {
             binding.switchAutoSoftReboot.setEnabled(checked);
         });
 
-        boolean autoSoftReboot = createDeviceProtectedStorageContext()
-                .getSharedPreferences("dfroot", MODE_PRIVATE)
+        boolean autoSoftReboot = deCtx.getSharedPreferences("dfroot", MODE_PRIVATE)
                 .getBoolean("auto_soft_reboot", true);
         binding.switchAutoSoftReboot.setChecked(autoSoftReboot);
         binding.switchAutoSoftReboot.setEnabled(bootEnabled);
         binding.switchAutoSoftReboot.setOnCheckedChangeListener((btn, checked) ->
-            createDeviceProtectedStorageContext()
-                .getSharedPreferences("dfroot", MODE_PRIVATE)
+            deCtx.getSharedPreferences("dfroot", MODE_PRIVATE)
                 .edit().putBoolean("auto_soft_reboot", checked).apply());
 
-        Context deCtx = createDeviceProtectedStorageContext();
         SharedPreferences prefs = deCtx.getSharedPreferences("dfroot", MODE_PRIVATE);
         boolean customKsud = prefs.getBoolean("custom_ksud", false);
         String customPath = prefs.getString("custom_ksud_path", null);
@@ -111,7 +110,7 @@ public class MainActivity extends AppCompatActivity implements IReporter {
             if (hasStoragePermission()) {
                 File src = new File(customPath);
                 if (!src.exists()) {
-                    clearCustomKsud(deCtx);
+                    clearCustomKsud();
                     customKsud = false;
                     customPath = null;
                 }
@@ -127,18 +126,17 @@ public class MainActivity extends AppCompatActivity implements IReporter {
         binding.btnSelectKsud.setVisibility(customKsud ? View.VISIBLE : View.GONE);
 
         binding.switchCustomKsud.setOnCheckedChangeListener((btn, checked) -> {
-            Context ctx = createDeviceProtectedStorageContext();
             if (checked) {
-                ctx.getSharedPreferences("dfroot", MODE_PRIVATE).edit().putBoolean("custom_ksud", true).apply();
+                deCtx.getSharedPreferences("dfroot", MODE_PRIVATE).edit().putBoolean("custom_ksud", true).apply();
                 if (!hasStoragePermission()) requestStoragePermission();
                 
-                String path = ctx.getSharedPreferences("dfroot", MODE_PRIVATE).getString("custom_ksud_path", null);
+                String path = deCtx.getSharedPreferences("dfroot", MODE_PRIVATE).getString("custom_ksud_path", null);
                 binding.btnSelectKsud.setText(path != null && !path.isEmpty() ? path : "Select ksud");
                 binding.btnSelectKsud.setVisibility(View.VISIBLE);
             } else {
                 binding.btnSelectKsud.setVisibility(View.GONE);
                 mExec.execute(() -> {
-                    clearCustomKsud(ctx);
+                    clearCustomKsud();
                 });
             }
         });
@@ -280,10 +278,10 @@ public class MainActivity extends AppCompatActivity implements IReporter {
         }
     }
 
-    private void clearCustomKsud(Context ctx) {
-        File customKsud = ExploitRunner.getCustomKsudFile(ctx);
+    private void clearCustomKsud() {
+        File customKsud = ExploitRunner.getCustomKsudFile(deCtx);
         if (customKsud.exists()) customKsud.delete();
-        ctx.getSharedPreferences("dfroot", MODE_PRIVATE).edit()
+        deCtx.getSharedPreferences("dfroot", MODE_PRIVATE).edit()
                 .putBoolean("custom_ksud", false)
                 .remove("custom_ksud_path")
                 .remove("custom_ksud_hash")
@@ -297,7 +295,6 @@ public class MainActivity extends AppCompatActivity implements IReporter {
                 File srcFile = new File(filePath);
                 if (!srcFile.exists()) throw new IOException("File does not exist: " + filePath);
 
-                Context deCtx = createDeviceProtectedStorageContext();
                 File customKsud = ExploitRunner.getCustomKsudFile(deCtx);
 
                 if (!copyFile(srcFile, customKsud)) throw new IOException("Cannot read or copy custom ksud from: " + filePath);
@@ -328,7 +325,6 @@ public class MainActivity extends AppCompatActivity implements IReporter {
             try {
                 if (!hasStoragePermission()) return;
 
-                Context deCtx = createDeviceProtectedStorageContext();
                 SharedPreferences prefs = deCtx.getSharedPreferences("dfroot", MODE_PRIVATE);
                 String pathStr = prefs.getString("custom_ksud_path", null);
                 if (pathStr == null || pathStr.isEmpty()) return;
@@ -337,7 +333,7 @@ public class MainActivity extends AppCompatActivity implements IReporter {
                 File customKsud = ExploitRunner.getCustomKsudFile(deCtx);
 
                 if (!srcFile.exists()) {
-                    clearCustomKsud(deCtx);
+                    clearCustomKsud();
                     report("ksud is missing\n");
                     mMain.post(() -> {
                         binding.switchCustomKsud.setChecked(false);
@@ -377,7 +373,7 @@ public class MainActivity extends AppCompatActivity implements IReporter {
 
     private void runExploit(boolean softReboot) {
         try {
-            int rc = ExploitRunner.run(this, this, softReboot);
+            int rc = ExploitRunner.run(deCtx, this, softReboot);
             String msg = rc == 0 ? "DFRoot: SUCCESS"
                        : rc == 1 ? "DFRoot FAILED: ksud exited with error"
                        : rc == 2 ? "DFRoot FAILED: check logs"
@@ -391,3 +387,4 @@ public class MainActivity extends AppCompatActivity implements IReporter {
         }
     }
 }
+
