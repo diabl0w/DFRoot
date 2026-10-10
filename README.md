@@ -39,7 +39,6 @@ A: Typically Android will detect bootloops and boot you into Safe Mode, otherwis
 2. Install a SU Manager from below:
    - Samsung:
      - [diabl0w's KernelSU](https://github.com/diabl0w/KernelSU/releases/latest)
-     - [zandatsu07's KernelSU-Next](https://github.com/zandatsu07/KernelSU-Next/releases)
    - Other:
      - [KernelSU](https://github.com/tiann/KernelSU/releases/latest)
      - [KernelSU-Next](https://github.com/KernelSU-Next/KernelSU-Next/releases/latest)
