@@ -13,6 +13,7 @@ app/.cxx/
 local.properties
 signing.properties
 keystore.jks
+.DS_Store
 
 # LKM build artifacts
 lkm/*.cmd
