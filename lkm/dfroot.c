@@ -106,20 +106,22 @@ static int __nocfi __init dfroot_init(void)
     // Some kernels ship CONFIG_SECURITY_SELINUX_DEVELOP=n, so the selinux_state
     // write above is a no-op there — patch the SELinux checks themselves instead
     // (both: most denials surface through the noaudit path first).
-    avc_fn = (void *)get_addr("avc_has_perm");
-    if (!avc_fn)
-        pr_err("dfroot: avc_has_perm not found, skipping\n");
-    else {
-        patch_fn_ret_zero(avc_fn);
-        pr_info("dfroot: avc_has_perm patched\n");
-    }
+    if (READ_ONCE(*selinux_state)) {
+        avc_fn = (void *)get_addr("avc_has_perm");
+        if (!avc_fn)
+            pr_err("dfroot: avc_has_perm not found, skipping\n");
+        else {
+            patch_fn_ret_zero(avc_fn);
+            pr_info("dfroot: avc_has_perm patched\n");
+        }
 
-    avc_noaudit_fn = (void *)get_addr("avc_has_perm_noaudit");
-    if (!avc_noaudit_fn)
-        pr_err("dfroot: avc_has_perm_noaudit not found, skipping\n");
-    else {
-        patch_fn_ret_zero(avc_noaudit_fn);
-        pr_info("dfroot: avc_has_perm_noaudit patched\n");
+        avc_noaudit_fn = (void *)get_addr("avc_has_perm_noaudit");
+        if (!avc_noaudit_fn)
+            pr_err("dfroot: avc_has_perm_noaudit not found, skipping\n");
+        else {
+            patch_fn_ret_zero(avc_noaudit_fn);
+            pr_info("dfroot: avc_has_perm_noaudit patched\n");
+        }
     }
 
     // Oppo/OnePlus
