@@ -193,6 +193,28 @@ static int disable_modules(void)
     return 0;
 }
 
+static int read_sysctl(const char *path)
+{
+    char buf[16];
+    int fd = open(path, O_RDONLY);
+    if (fd < 0) return -1;
+    int n = read(fd, buf, sizeof(buf) - 1);
+    close(fd);
+    if (n <= 0) return -1;
+    buf[n] = '\0';
+    return atoi(buf);
+}
+
+static void write_sysctl(const char *path, int value)
+{
+    char buf[16];
+    snprintf(buf, sizeof(buf), "%d\n", value);
+    int fd = open(path, O_WRONLY);
+    if (fd < 0) return;
+    write(fd, buf, strlen(buf));
+    close(fd);
+}
+
 int main(void)
 {
     touch("/dev/dfm1");
@@ -219,16 +241,35 @@ int main(void)
         }
     }
 
-    touch("/dev/dfm5");    
+    touch("/dev/dfm5");
+
+    /* Some OEM ROMs (e.g. vivo) ship kptr_restrict=2, which zeroes kernel
+     * symbol addresses in /proc/kallsyms even for root. ksud late-load loads
+     * kernelsu.ko from userspace and relocates it against kallsyms, so with
+     * the addresses masked the load silently fails and root never appears.
+     * Lower it for the duration of the load and restore it afterwards. */
+    int kptr = read_sysctl("/proc/sys/kernel/kptr_restrict");
+    if (kptr > 0)
+        write_sysctl("/proc/sys/kernel/kptr_restrict", 0);
+
     if (run_ctx(NULL, (char *[]){ KSUD_STAGE, "late-load", "--package-name", su_manager, NULL }) == 0) {
         touch("/dev/dfm6");
+        if (kptr > 0) {
+            /* late-load daemonizes; the module load happens in the daemon, so
+             * wait for it to finish before restoring. */
+            for (int i = 0; i < 120 && late_load_running(); i++)
+                sleep(1);
+            write_sysctl("/proc/sys/kernel/kptr_restrict", kptr);
+        }
         if (soft_reboot) {
             while (late_load_running()) sleep(1);
             run_ctx("u:r:ksu:s0", (char *[]){ KSUD, "soft-reboot", NULL });
         }
     } else {
         touch("/dev/dfme2");
+        if (kptr > 0)
+            write_sysctl("/proc/sys/kernel/kptr_restrict", kptr);
     }
-        
+
     return 0;
 }
