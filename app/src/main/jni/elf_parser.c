@@ -14,6 +14,7 @@ static int find_code_cave(int fd, uint64_t exec_off, uint64_t exec_filesz,
     long pagesize = sysconf(_SC_PAGESIZE);
     uint64_t page_off = tail_off & ((uint64_t)pagesize - 1);
     uint64_t slack = page_off ? (uint64_t)pagesize - page_off : 0;
+    printf("tail-page slack: %llu bytes\n", (unsigned long long)slack);
     if (shellcode_size <= slack) {
         *out_off = tail_off;
         return 0;
