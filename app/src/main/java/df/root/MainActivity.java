@@ -131,7 +131,7 @@ public class MainActivity extends Activity implements IReporter {
     }
 
     private void updateRunButton() {
-        btnRun.setEnabled(mValidSuManagerPos >= 1 && !new File("/dev/df").exists());
+        btnRun.setEnabled(mValidSuManagerPos >= 1);
     }
 
     private void runExploit() {

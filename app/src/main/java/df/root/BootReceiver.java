@@ -6,7 +6,6 @@ import android.content.Intent;
 import android.os.PowerManager;
 import android.util.Log;
 
-import java.io.File;
 
 public class BootReceiver extends BroadcastReceiver implements IReporter {
     private static final String TAG = "dfroot";
@@ -18,10 +17,6 @@ public class BootReceiver extends BroadcastReceiver implements IReporter {
 
     @Override
     public void onReceive(Context context, Intent intent) {
-        if (new File("/dev/df").exists()) {
-            Log.i(TAG, "boot: already hooked, skipping");
-            return;
-        }
         Log.i(TAG, "boot: " + intent.getAction());
         final Context deCtx = context.createDeviceProtectedStorageContext();
         PowerManager pm = (PowerManager) context.getSystemService(Context.POWER_SERVICE);

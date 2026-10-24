@@ -219,7 +219,7 @@ int main(void)
         }
     }
 
-    touch("/dev/dfm5");    
+    touch("/dev/dfm5");
     if (run_ctx(NULL, (char *[]){ KSUD_STAGE, "late-load", "--package-name", su_manager, NULL }) == 0) {
         touch("/dev/dfm6");
         if (soft_reboot) {
@@ -229,6 +229,14 @@ int main(void)
     } else {
         touch("/dev/dfme2");
     }
-        
+
+    sleep(1);
+    unlink("/dev/df");
+    unlink("/dev/dfm0"); unlink("/dev/dfm1"); unlink("/dev/dfm2");
+    unlink("/dev/dfm3"); unlink("/dev/dfm4"); unlink("/dev/dfm5");
+    unlink("/dev/dfm6");
+    unlink("/dev/dfme0"); unlink("/dev/dfme1"); unlink("/dev/dfme2");
+    unlink("/dev/dfmw0"); unlink("/dev/dfmw1");
+
     return 0;
 }
