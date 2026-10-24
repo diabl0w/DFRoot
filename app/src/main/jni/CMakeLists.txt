@@ -36,7 +36,7 @@ set(KO_FILES
 # AGP only packages lib*.so, so the executable is named libdfroot.so and lands
 # in the APK's native lib dir. The app execs it from nativeLibraryDir, which is
 # executable (app data dir is not).
-add_executable(dfroot exp.c libcxx.S elf_parser.c)
+add_executable(dfroot exp.c libselinux.S elf_parser.c)
 add_dependencies(dfroot splicehelper_bin)
 set_target_properties(dfroot PROPERTIES
     PREFIX "lib"

