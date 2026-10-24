@@ -8,7 +8,7 @@ all:
 		ARCH=arm64 \
 		LLVM=1 \
 		modules
-	$(OBJCOPY) --strip-unneeded \
+	llvm-objcopy --strip-debug \
 	           -R .comment -R .note.gnu.property \
 	           -R .note.Linux -R .note.GNU-stack \
 	           -R .BTF -R .BTF.base -R .llvm_addrsig \
