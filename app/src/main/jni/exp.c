@@ -487,8 +487,7 @@ static int setup(int argc, char **argv) {
     memcpy(g_aes_key, aes_key, 32);
 
     const char *detected_ko_target = detect_ko_target();
-    strncpy(ko_target, detected_ko_target, 63);
-    ko_target[63] = '\0';
+    strncpy(ko_target, detected_ko_target, 49);
 
     printf("=== setup ===\n");
     printf("found ko_target: %s\n", detected_ko_target);
