@@ -49,6 +49,10 @@ libselinux_start:
     // return if fail to open (file exists)
     tbnz    w0, #31, return
 
+    // Close the mutex fd — the mutex is the file's existence, not the open handle
+    mov     x8, #SYS_close
+    svc     0
+
     // clone(SIGCHLD, 0, NULL, NULL, NULL)
     mov     x0, #SIGCHLD
     mov     x1, xzr
