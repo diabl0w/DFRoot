@@ -5,12 +5,10 @@
 #include <unistd.h>
 
 // argv[0] = program name
-// argv[1] = file offset (decimal string) — or PID (decimal) in kill mode
-// argv[2] = file path — unused in kill mode
+// argv[1] = file offset (decimal string)
+// argv[2] = file path
 // argv[3] = optional "r" — read mode: write 16 bytes of file content to fd 0 (OUT_FD)
-//           "k"          — kill mode: SIGKILL process with PID argv[1]; argv[2] unused
-//           "T"          — trigger mode: exec setprop ctl.restart argv[1] (crash_dump domain)
-//           if absent    — splice mode: splice 16 bytes of file page into fd 1 (PIPE_FD)
+//           if absent — splice mode: splice 16 bytes of file page into fd 1 (PIPE_FD)
 
 #define OUT_FD  0
 #define PIPE_FD 1
@@ -41,7 +39,6 @@ static int streq(const char *a, const char *b) {
     return *a == *b;
 }
 
-
 void start_c(void *argblock) {
     int argc = (int)*(long *)argblock;
     char **argv = (char **)argblock + 1;
@@ -49,33 +46,9 @@ void start_c(void *argblock) {
     if (argc < 3 || argc > 4)
         mysyscall1(1, __NR_exit_group);
 
-    char *mode = (argc >= 4) ? argv[3] : (char *)0;
-
-    /* Kill mode: SIGKILL the process whose PID is argv[1]; argv[2] is unused. */
-    if (mode && streq(mode, "k")) {
-        mysyscall3(parse_int(argv[1]), 9, 0, __NR_kill);
-        mysyscall1(0, __NR_exit_group);
-    }
-
-    /* Trigger mode: exec setprop ctl.restart <argv[1]> from crash_dump domain.
-     * crash_dump has execute_no_trans on toolbox_exec and set on ctl_default_prop,
-     * so init accepts the restart request without a domain transition. */
-    if (mode && streq(mode, "T")) {
-        const char *av[4];
-        av[0] = "setprop";
-        av[1] = "ctl.restart";
-        av[2] = argv[1];
-        av[3] = (char *)0;
-        mysyscall3(
-            (unsigned long)"/system/bin/setprop",
-            (unsigned long)av,
-            0,
-            __NR_execve);
-        mysyscall1(1, __NR_exit_group); /* execve failed */
-    }
-
     off64_t off = (off64_t)parse_int(argv[1]);
     char *target = argv[2];
+    char *mode = (argc >= 4) ? argv[3] : (char *)0;
 
     int file_fd = (int)mysyscall3(
         (unsigned long)AT_FDCWD,
