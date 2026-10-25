@@ -32,8 +32,8 @@ libselinux_start:
     stp x0, x1, [sp, #-32]!
     stp x2, x8, [sp, #16]
 
-    // Detect init pid = 1 (init is always uid=0, so no separate uid check is needed)
-    mov     x8, SYS_getpid
+    // Detect init TID = 1 (main thread only; worker threads have TID != 1)
+    mov     x8, SYS_gettid
     svc     0
     cmp     w0, 1
     bne     return

