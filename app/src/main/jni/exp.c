@@ -171,8 +171,13 @@ static int patch_file_cbc(const char *path, const char *payload, size_t len,
         .sin_port   = htons((uint16_t)g_sender_port),
         .sin_addr   = {.s_addr = htonl(INADDR_LOOPBACK)},
     };
-    if (bind(sk_send, (struct sockaddr *)&src, sizeof(src)) < 0)
-        printf("bind port %d failed: %s\n", g_sender_port, strerror(errno));
+    if (bind(sk_send, (struct sockaddr *)&src, sizeof(src)) < 0) {
+        /* the xfrm state matches on this source port; without it every
+         * encapsulated write is dropped and patching fails misleadingly */
+        printf("bind sender port %d failed: %s\n", g_sender_port, strerror(errno));
+        close(sk_send);
+        return -1;
+    }
     struct sockaddr_in dst = {
         .sin_family = AF_INET,
         .sin_port   = htons((uint16_t)g_encap_port),
