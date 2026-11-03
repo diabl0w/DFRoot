@@ -1,3 +1,5 @@
+#include <linux/err.h>
+#include <linux/fs.h>
 #include <linux/init.h>
 #include <linux/kernel.h>
 #include <linux/kmod.h>
@@ -16,8 +18,57 @@ typedef int  (*kern_path_t)(const char *, unsigned int, struct path *);
 typedef int  (*invalidate_t)(struct address_space *);
 typedef void (*path_put_t)(const struct path *);
 typedef int  (*insn_patch_t)(void *addrs[], u32 insns[], int cnt);
+typedef struct file *(*filp_open_t)(const char *, int, umode_t);
+typedef ssize_t (*kernel_read_t)(struct file *, void *, size_t, loff_t *);
+typedef int (*filp_close_t)(struct file *, fl_owner_t);
 
 static insn_patch_t insn_patch_text;
+
+/* Returns true only when /sys/fs/selinux/enforce reads back "0".
+ *
+ * The first member of struct selinux_state is "enforcing" only when
+ * CONFIG_SECURITY_SELINUX_DEVELOP=y; otherwise the selinux_state write in
+ * dfroot_init() lands on an unrelated bool (checkreqprot/disabled) and changes
+ * nothing. The selinuxfs node reports the real state (and is hardwired to 1
+ * when the enforcing field does not exist), so it is the only reliable way to
+ * tell the two cases apart. On any read failure assume enforcing so the avc
+ * fallback still runs.
+ */
+static __nocfi bool selinux_is_permissive(kallsyms_lookup_name_t get_addr)
+{
+    filp_open_t   filp_open_fn;
+    kernel_read_t kernel_read_fn;
+    filp_close_t  filp_close_fn;
+    struct file  *filp;
+    char buf[4];
+    loff_t pos = 0;
+    ssize_t n;
+
+    filp_open_fn   = (filp_open_t)get_addr("filp_open");
+    kernel_read_fn = (kernel_read_t)get_addr("kernel_read");
+    filp_close_fn  = (filp_close_t)get_addr("filp_close");
+    if (!filp_open_fn || !kernel_read_fn || !filp_close_fn) {
+        pr_err("dfroot: file io symbols missing, assuming enforcing\n");
+        return false;
+    }
+
+    filp = filp_open_fn("/sys/fs/selinux/enforce", 0 /* O_RDONLY */, 0);
+    if (IS_ERR(filp)) {
+        pr_err("dfroot: open selinux enforce failed (%ld), assuming enforcing\n",
+               PTR_ERR(filp));
+        return false;
+    }
+
+    n = kernel_read_fn(filp, buf, sizeof(buf) - 1, &pos);
+    filp_close_fn(filp, NULL);
+    if (n <= 0) {
+        pr_err("dfroot: read selinux enforce returned %ld, assuming enforcing\n", n);
+        return false;
+    }
+    buf[n] = '\0';
+    pr_info("dfroot: selinux enforce=%c\n", buf[0]);
+    return buf[0] == '0';
+}
 
 static __nocfi void patch_fn_ret_zero(void *fn)
 {
@@ -103,10 +154,13 @@ static int __nocfi __init dfroot_init(void)
     WRITE_ONCE(*selinux_state, false);
     pr_info("dfroot: selinux_state permissive\n");
 
-    // Some kernels ship CONFIG_SECURITY_SELINUX_DEVELOP=n, so the selinux_state
-    // write above is a no-op there — patch the SELinux checks themselves instead
-    // (both: most denials surface through the noaudit path first).
-    if (READ_ONCE(*selinux_state)) {
+    /* Kernels with CONFIG_SECURITY_SELINUX_DEVELOP=n keep the write above as
+     * a no-op (and permissive can't be reached at all), so fall back to
+     * patching the SELinux checks themselves (both: most denials surface
+     * through the noaudit path first). Only skip them when permissive has
+     * actually been confirmed, so enforcing is not left silently bypassed
+     * once a SU manager restores enforce=1. */
+    if (READ_ONCE(*selinux_state) || !selinux_is_permissive(get_addr)) {
         avc_fn = (void *)get_addr("avc_has_perm");
         if (!avc_fn)
             pr_err("dfroot: avc_has_perm not found, skipping\n");
