@@ -304,21 +304,25 @@ static int read_device_versions(int *andr, int *major, int *minor) {
     struct utsname u;
     if (uname(&u) != 0) return -1;
     if (sscanf(u.release, "%d.%d", major, minor) != 2) return -1;
+
+    /* Prefer ro.build.version.release over the GKI KMI version embedded in the
+     * kernel string. Older vendor kernels (e.g. Samsung 5.4) carry "android11"
+     * in uname -r even when the device runs a much newer Android release, so
+     * reading the kernel string here would report the wrong OS version. */
+    char ver[8] = {0};
+    FILE *f = popen("getprop ro.build.version.release", "r");
+    if (f) {
+        fgets(ver, sizeof(ver), f);
+        pclose(f);
+        *andr = atoi(ver);
+        if (*andr > 0) return 0;
+    }
+
+    /* Fall back to the kernel release string. */
     const char *m = strstr(u.release, "android");
     if (!m) {
-        printf("uname -r is missing Android version, trying getprop\n");
-
-        char vendor_ver[5];
-        char release[15];
-
-        FILE *f = popen("getprop ro.vendor.build.version.release", "r");
-        fgets(vendor_ver, sizeof(vendor_ver), f);
-        pclose(f);
-
-        sprintf(release, "android");
-        sprintf(eos(release), "%s", vendor_ver);
-
-        m = release;
+        printf("uname -r is missing Android version and getprop failed\n");
+        return -1;
     }
     *andr = atoi(m + 7);
     return (*andr > 0) ? 0 : -1;
