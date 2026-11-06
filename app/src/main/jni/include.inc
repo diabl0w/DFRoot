@@ -197,12 +197,12 @@
 
   // simulate a push operation
   .macro push Rn:req
-      str     \Rn, [sp, -16]
+      str     \Rn, [sp, #-16]!
   .endm
 
   // simulate a pop operation
   .macro pop R:req
-      ldr     \Rn, [sp], 16
+      ldr     \R, [sp], #16
   .endm
 
 // Save x0 to filename for debugging.
