@@ -94,34 +94,48 @@ static int __nocfi __init dfroot_init(void)
         pr_info("dfroot: cleared page cache for crash_dump64\n");
     }
 
-    // Disable SELinux
+    // Disable SELinux.
+    //
+    // NOTE for Samsung 5.4 vendor kernels (SEC_SELINUX_PORTING_COMMON): the
+    // struct below has `disabled` unconditionally as its first byte, and
+    // enforcing_enabled() returns a separate global int `selinux_enforcing`
+    // instead of selinux_state.enforcing. Writing the struct alone therefore
+    // changes nothing, so set the global too. Keep the avc_has_perm patching
+    // unconditional as a belt-and-braces fallback.
     selinux_state = (bool *)get_addr("selinux_state");
     if (!selinux_state) {
         pr_err("dfroot: selinux_state not found\n");
-        return -EINVAL;
+    } else {
+        WRITE_ONCE(*selinux_state, false);
+        pr_info("dfroot: selinux_state.first_byte = 0 (disabled)\n");
     }
-    WRITE_ONCE(*selinux_state, false);
-    pr_info("dfroot: selinux_state permissive\n");
 
-    // Some kernels ship CONFIG_SECURITY_SELINUX_DEVELOP=n, so the selinux_state
-    // write above is a no-op there — patch the SELinux checks themselves instead
-    // (both: most denials surface through the noaudit path first).
-    if (READ_ONCE(*selinux_state)) {
-        avc_fn = (void *)get_addr("avc_has_perm");
-        if (!avc_fn)
-            pr_err("dfroot: avc_has_perm not found, skipping\n");
-        else {
-            patch_fn_ret_zero(avc_fn);
-            pr_info("dfroot: avc_has_perm patched\n");
+    {
+        int *enforcing = (int *)get_addr("selinux_enforcing");
+        if (!enforcing) {
+            pr_err("dfroot: selinux_enforcing not found\n");
+        } else {
+            pr_info("dfroot: selinux_enforcing was %d\n", READ_ONCE(*enforcing));
+            WRITE_ONCE(*enforcing, 0);
+            pr_info("dfroot: selinux_enforcing = %d\n", READ_ONCE(*enforcing));
         }
+    }
 
-        avc_noaudit_fn = (void *)get_addr("avc_has_perm_noaudit");
-        if (!avc_noaudit_fn)
-            pr_err("dfroot: avc_has_perm_noaudit not found, skipping\n");
-        else {
-            patch_fn_ret_zero(avc_noaudit_fn);
-            pr_info("dfroot: avc_has_perm_noaudit patched\n");
-        }
+    // Patch the permission checks themselves; independent of the flag above.
+    avc_fn = (void *)get_addr("avc_has_perm");
+    if (!avc_fn)
+        pr_err("dfroot: avc_has_perm not found, skipping\n");
+    else {
+        patch_fn_ret_zero(avc_fn);
+        pr_info("dfroot: avc_has_perm patched\n");
+    }
+
+    avc_noaudit_fn = (void *)get_addr("avc_has_perm_noaudit");
+    if (!avc_noaudit_fn)
+        pr_err("dfroot: avc_has_perm_noaudit not found, skipping\n");
+    else {
+        patch_fn_ret_zero(avc_noaudit_fn);
+        pr_info("dfroot: avc_has_perm_noaudit patched\n");
     }
 
     // Oppo/OnePlus
