@@ -244,6 +244,8 @@ extern uint32_t libcxx_ko_target_off;
 
 asm(
     ".section .rodata\n"
+    ".global dfroot_ko_11_5_4_start\n.global dfroot_ko_11_5_4_end\n"
+    "dfroot_ko_11_5_4_start:\n.incbin \"ko/dfroot-android11-5.4.ko\"\ndfroot_ko_11_5_4_end:\n"
     ".global dfroot_ko_12_5_10_start\n.global dfroot_ko_12_5_10_end\n"
     "dfroot_ko_12_5_10_start:\n.incbin \"ko/dfroot-android12-5.10.ko\"\ndfroot_ko_12_5_10_end:\n"
     ".global dfroot_ko_13_5_10_start\n.global dfroot_ko_13_5_10_end\n"
@@ -268,6 +270,7 @@ asm(
     "splice_helper_start:\n.incbin \"splicehelper\"\nsplice_helper_end:\n"
 );
 
+extern char dfroot_ko_11_5_4_start[],  dfroot_ko_11_5_4_end[];
 extern char dfroot_ko_12_5_10_start[], dfroot_ko_12_5_10_end[];
 extern char dfroot_ko_13_5_10_start[], dfroot_ko_13_5_10_end[];
 extern char dfroot_ko_13_5_15_start[], dfroot_ko_13_5_15_end[];
@@ -282,6 +285,7 @@ struct KoImage { int android_release, kver_major, kver_minor; const char *start,
 
 static const struct KoImage *select_ko_image(int andr, int major, int minor) {
     static const struct KoImage imgs[] = {
+        {11, 5,  4, dfroot_ko_11_5_4_start,  dfroot_ko_11_5_4_end},
         {12, 5, 10, dfroot_ko_12_5_10_start, dfroot_ko_12_5_10_end},
         {13, 5, 10, dfroot_ko_13_5_10_start, dfroot_ko_13_5_10_end},
         {13, 5, 15, dfroot_ko_13_5_15_start, dfroot_ko_13_5_15_end},

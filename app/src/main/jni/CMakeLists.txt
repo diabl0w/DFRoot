@@ -23,6 +23,7 @@ add_custom_command(
 add_custom_target(splicehelper_bin DEPENDS "${SPLICEHELPER}")
 
 set(KO_FILES
+    "${JNI_DIR}/ko/dfroot-android11-5.4.ko"
     "${JNI_DIR}/ko/dfroot-android12-5.10.ko"
     "${JNI_DIR}/ko/dfroot-android13-5.10.ko"
     "${JNI_DIR}/ko/dfroot-android13-5.15.ko"
