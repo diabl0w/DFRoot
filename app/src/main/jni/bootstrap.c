@@ -1,5 +1,6 @@
 #include <dirent.h>
 #include <fcntl.h>
+#include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -9,10 +10,39 @@
 #include <unistd.h>
 
 #define BLKROSET   0x125d
-#define KSUD_STAGE "/data/user_de/0/df.root/ksud"
 #define KSUD       "/data/adb/ksud"
-#define PREFS_PATH "/data/user_de/0/df.root/shared_prefs/dfroot.xml"
 #define MODULES_DIR "/data/adb/modules"
+
+#ifndef PATH_MAX
+#define PATH_MAX 4096
+#endif
+
+/* Derive profile-local paths from this executable's directory. */
+static char g_ksud_stage[PATH_MAX];
+static char g_prefs_path[PATH_MAX];
+
+static int resolve_profile_paths(void)
+{
+    char self_path[PATH_MAX];
+    ssize_t n = readlink("/proc/self/exe", self_path, sizeof(self_path) - 1);
+    if (n <= 0 || n >= (ssize_t)sizeof(self_path) - 1)
+        return -1;
+    self_path[n] = '\0';
+
+    char *slash = strrchr(self_path, '/');
+    if (!slash || slash == self_path)
+        return -1;
+    *slash = '\0';
+
+    int a = snprintf(g_ksud_stage, sizeof(g_ksud_stage), "%s/ksud", self_path);
+    int b = snprintf(g_prefs_path, sizeof(g_prefs_path),
+                     "%s/shared_prefs/dfroot.xml", self_path);
+    if (a < 0 || (size_t)a >= sizeof(g_ksud_stage) ||
+        b < 0 || (size_t)b >= sizeof(g_prefs_path))
+        return -1;
+
+    return 0;
+}
 
 static int pref_true(const char *buf, const char *key)
 {
@@ -28,7 +58,7 @@ static int pref_true(const char *buf, const char *key)
 static int read_prefs(char *su_manager, size_t su_manager_size, int *soft_reboot,
                       int *disable_modules)
 {
-    int fd = open(PREFS_PATH, O_RDONLY);
+    int fd = open(g_prefs_path, O_RDONLY);
     if (fd < 0) return -1;
 
     char buf[4096];
@@ -198,7 +228,8 @@ int main(void)
     touch("/dev/dfm1");
     char su_manager[256];
     int soft_reboot, disable_mods;
-    if (read_prefs(su_manager, sizeof(su_manager), &soft_reboot, &disable_mods) != 0) {
+    if (resolve_profile_paths() != 0 ||
+        read_prefs(su_manager, sizeof(su_manager), &soft_reboot, &disable_mods) != 0) {
         touch("/dev/dfme0");
         return 1;
     }
@@ -220,7 +251,7 @@ int main(void)
     }
 
     touch("/dev/dfm5");    
-    if (run_ctx(NULL, (char *[]){ KSUD_STAGE, "late-load", "--package-name", su_manager, NULL }) == 0) {
+    if (run_ctx(NULL, (char *[]){ g_ksud_stage, "late-load", "--package-name", su_manager, NULL }) == 0) {
         touch("/dev/dfm6");
         if (soft_reboot) {
             while (late_load_running()) sleep(1);

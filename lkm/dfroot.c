@@ -7,6 +7,10 @@
 MODULE_LICENSE("GPL");
 MODULE_DESCRIPTION("DFRoot LKM");
 
+static unsigned int dfroot_user_id = ~0U;
+module_param(dfroot_user_id, uint, 0400);
+MODULE_PARM_DESC(dfroot_user_id, "Android user ID hosting the DFRoot app");
+
 typedef unsigned long (*kallsyms_lookup_name_t)(const char *name);
 typedef unsigned long (*module_kallsyms_lookup_name_t)(const char *name);
 typedef void *(*umh_setup_t)(const char *path, char **argv, char **envp, gfp_t gfp,
@@ -54,11 +58,32 @@ static int __nocfi __init dfroot_init(void)
 
     // UMH command to run
     static const char sh[] = "/system/bin/sh";
-    static const char bootstrap[] = "/data/user_de/0/df.root/bootstrap";
+    static char bootstrap[128];
     static char cmd[512];
     static char *envp[] = { "PATH=/system/bin", NULL };
     static char *argv[] = { (char *)sh, "-c", cmd, NULL };
-    snprintf(cmd, sizeof(cmd), "touch /dev/dfm0; echo -n 'u:r:init:s0' > /proc/self/attr/exec; exec %s", bootstrap);
+
+
+    /* The module runs device-wide, so use the originating app's profile ID. */
+    if (dfroot_user_id == ~0U) {
+        pr_err("dfroot: missing dfroot_user_id module parameter\n");
+        return -EINVAL;
+    }
+
+    ret = snprintf(bootstrap, sizeof(bootstrap),
+                   "/data/user_de/%u/df.root/bootstrap", dfroot_user_id);
+    if (ret < 0 || (size_t)ret >= sizeof(bootstrap)) {
+        pr_err("dfroot: bootstrap path overflow for user %u\n", dfroot_user_id);
+        return -EINVAL;
+    }
+    ret = snprintf(cmd, sizeof(cmd),
+                   "touch /dev/dfm0; "
+                   "echo -n 'u:r:init:s0' > /proc/self/attr/exec; "
+                   "exec %s", bootstrap);
+    if (ret < 0 || (size_t)ret >= sizeof(cmd)) {
+        pr_err("dfroot: bootstrap command overflow\n");
+        return -EINVAL;
+    }
 
     // Symbol finder
     kln_kp = (struct kprobe){ .symbol_name = "kallsyms_lookup_name" };
