@@ -28,6 +28,14 @@ ko_target:
 libcxx_ko_target_off:
     .int ko_target - libcxx_data
 
+    .balign 4
+user_arg:
+    .space 32, 0
+    .balign 4
+    .global libcxx_user_arg_off
+libcxx_user_arg_off:
+    .int user_arg - libcxx_data
+
     .align 4
 
 libcxx_start:
@@ -111,12 +119,14 @@ libcxx_start:
     mov     x8, #SYS_write
     svc     0
 
-    // execve("/vendor/bin/insmod", [exe_path, ko_target, NULL], NULL)
+    // execve("/vendor/bin/insmod", [exe_path, ko_target, user_arg, NULL], NULL)
     adr     x1, exe_path
     str     x1, [sp]
     adr     x1, ko_target
     str     x1, [sp, 8]
-    str     xzr, [sp, 16]
+    adr     x1, user_arg
+    str     x1, [sp, 16]
+    str     xzr, [sp, 24]
     adr     x0, exe_path
     mov     x1, sp
     mov     x2, xzr

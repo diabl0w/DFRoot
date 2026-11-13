@@ -241,6 +241,7 @@ extern char libcxx_data[];
 extern uint32_t libcxx_len;
 extern char libcxx_first_inst_copy[];
 extern uint32_t libcxx_ko_target_off;
+extern uint32_t libcxx_user_arg_off;
 
 asm(
     ".section .rodata\n"
@@ -494,14 +495,14 @@ static int hex_to_bytes(const char *hex, uint8_t *out, size_t len) {
 
 static void usage(const char *argv0) {
     fprintf(stderr,
-            "usage: %s --encap-port N --sender-port N --spi N --aes-key HEX\n", argv0);
+            "usage: %s --encap-port N --sender-port N --spi N --aes-key HEX --user-id N\n", argv0);
 }
 
 static int setup(int argc, char **argv) {
     int encap_port = 0, sender_port = 0;
-    uint32_t spi = 0;
+    uint32_t spi = 0, user_id = 0;
     uint8_t aes_key[32];
-    int have_aes = 0;
+    int have_aes = 0, have_user_id = 0;
 
     for (int i = 1; i < argc; i++) {
         const char *a = argv[i];
@@ -513,9 +514,20 @@ static int setup(int argc, char **argv) {
             spi = (uint32_t)strtoul(argv[++i], NULL, 0);
         else if (!strcmp(a, "--aes-key") && i + 1 < argc)
             have_aes = hex_to_bytes(argv[++i], aes_key, sizeof(aes_key)) == 0;
+        else if (!strcmp(a, "--user-id") && i + 1 < argc) {
+            const char *value = argv[++i];
+            char *end = NULL;
+            errno = 0;
+            unsigned long parsed = strtoul(value, &end, 10);
+            if (value[0] != '-' && errno == 0 && end != value && *end == '\0' &&
+                parsed <= UINT32_MAX) {
+                user_id = (uint32_t)parsed;
+                have_user_id = 1;
+            }
+        }
         else { usage(argv[0]); return 2; }
     }
-    if (!encap_port || !sender_port || !spi || !have_aes) {
+    if (!encap_port || !sender_port || !spi || !have_aes || !have_user_id) {
         usage(argv[0]); return 2;
     }
 
@@ -530,10 +542,18 @@ static int setup(int argc, char **argv) {
     strncpy(libcxx_ko_target, ko_target, 63);
     libcxx_ko_target[63] = '\0';
 
+    char *libcxx_user_arg = libcxx_data + libcxx_user_arg_off;
+    int user_arg_len = snprintf(libcxx_user_arg, 32, "dfroot_user_id=%u", user_id);
+    if (user_arg_len < 0 || user_arg_len >= 32) {
+        printf("Invalid Android user ID module argument\n");
+        return 2;
+    }
+
     printf("=== setup ===\n");
     printf("found ko_target: %s\n", ko_target);
     printf("encap port: %d\n", encap_port);
     printf("spi: 0x%x\n", spi);
+    printf("Android user ID: %u\n", user_id);
     return 0;
 }
 
