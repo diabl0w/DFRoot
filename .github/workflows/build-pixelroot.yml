@@ -16,7 +16,7 @@ jobs:
         run: |
           set -e
           mkdir -p app/src/main/jni/ko
-          for kmi in android12-5.10 android13-5.15 android14-5.15 android14-6.1 android15-6.6 android16-6.12 android17-6.18; do
+          for kmi in android12-5.10 android13-5.10 android13-5.15 android14-5.15 android14-6.1 android15-6.6 android16-6.12 android17-6.18; do
             echo "=== Building dfroot-$kmi.ko ==="
             docker run --rm --pid=host --network=none \
               -v "$PWD:/proj" \
@@ -24,6 +24,7 @@ jobs:
               "ghcr.io/ylarod/ddk-min:${kmi}-20260828" \
               bash -c 'set -e; cd /proj/lkm; make -j$(nproc); cp dfroot.ko /proj/app/src/main/jni/ko/dfroot-$KMI.ko; make clean'
           done
+          sudo chmod -R a+rwX app/src/main/jni/ko/
           ls -lh app/src/main/jni/ko/
 
       - name: Set up JDK 17
