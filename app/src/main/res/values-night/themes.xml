@@ -1,11 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
 <resources>
     <style name="Theme.DirtyFrag" parent="android:Theme.Material">
-        <item name="android:windowBackground">@android:color/black</item>
-        <item name="android:colorBackground">@android:color/black</item>
-        <item name="android:colorPrimary">#4A7A57</item>
-        <item name="android:colorAccent">#4A7A57</item>
+        <item name="android:windowBackground">#000000</item>
+        <item name="android:colorBackground">#000000</item>
+        <item name="android:colorPrimary">#0D0D0D</item>
+        <item name="android:colorPrimaryDark">#000000</item>
+        <item name="android:colorAccent">#FFFFFF</item>
+        <item name="android:statusBarColor">#000000</item>
+        <item name="android:navigationBarColor">#000000</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:textColorPrimary">#FFFFFF</item>
+        <item name="android:textColorSecondary">#9E9E9E</item>
+        <item name="android:colorControlNormal">#FFFFFF</item>
+        <item name="android:colorControlActivated">#FFFFFF</item>
         <item name="android:colorButtonNormal">@color/btn_background_color</item>
         <item name="android:buttonCornerRadius">24dp</item>
         <item name="android:buttonStyle">@style/Widget.DirtyFrag.Button</item>
+    </style>
+
+    <style name="Widget.DirtyFrag.Button" parent="android:Widget.Material.Button">
+        <item name="android:textColor">@color/btn_text_color</item>
+        <item name="android:textAllCaps">false</item>
+        <item name="android:letterSpacing">0.02</item>
     </style>
 </resources>

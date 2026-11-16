@@ -17,11 +17,11 @@ android {
     }
 
     defaultConfig {
-        applicationId = "df.root"
+        applicationId = "com.deltabsolutezero.pixelroot"
         minSdk = 32
         targetSdk = 37
         versionCode = 407
-        versionName = "4.7"
+        versionName = "1.0.0"
 
         ndk {
             abiFilters += listOf("arm64-v8a")
@@ -75,7 +75,7 @@ android {
 androidComponents {
     onVariants { variant ->
         variant.outputs.forEach { output ->
-            output.outputFileName.set(output.versionName.map { vn -> "DFRoot_${vn}.apk" })
+            output.outputFileName.set(output.versionName.map { vn -> "PixelRoot_${vn}.apk" })
         }
     }
 }
