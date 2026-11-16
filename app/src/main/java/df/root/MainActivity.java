@@ -77,6 +77,7 @@ public class MainActivity extends Activity implements IReporter {
     private final Handler mMain = new Handler(Looper.getMainLooper());
     private final Executor mExec = Executors.newSingleThreadExecutor();
     private int mValidSuManagerPos = 0;
+    private volatile boolean mIsRootActive = false;
 
     @Override
     public void report(String msg) {
@@ -521,8 +522,10 @@ public class MainActivity extends Activity implements IReporter {
 
     private void refreshRootStatusAndModules() {
         mExec.execute(() -> {
+            String idOut = runRootCmd("id 2>/dev/null").trim();
             String ksuVer = runRootCmd("/data/adb/ksud -V 2>/dev/null || su -v 2>/dev/null").trim();
-            boolean rooted = !ksuVer.isEmpty() || new File("/dev/df").exists();
+            boolean rooted = idOut.contains("uid=0") || !ksuVer.isEmpty() || new File("/dev/df").exists();
+            mIsRootActive = rooted;
             String rawMods = runRootCmd("ls -1 /data/adb/modules 2>/dev/null");
 
             List<ModuleItem> items = new ArrayList<>();
@@ -742,13 +745,21 @@ public class MainActivity extends Activity implements IReporter {
     }
 
     private void updateRunButton() {
-        boolean alreadyHooked = new File("/dev/df").exists();
+        boolean alreadyHooked = mIsRootActive || new File("/dev/df").exists();
         btnRun.setEnabled(mValidSuManagerPos >= 1 && !alreadyHooked);
-        btnRun.setText(alreadyHooked ? "Root Already Hooked (/dev/df)" : "Launch Root");
+        btnRun.setText(alreadyHooked ? "Root Active" : "Launch Root");
     }
 
     private void runExploit() {
         try {
+            String preId = runRootCmd("id 2>/dev/null").trim();
+            if (preId.contains("uid=0") || new File("/dev/df").exists()) {
+                mIsRootActive = true;
+                report("[PIXELROOT] Root already active (" + preId + ") — skipping duplicate patch.\n");
+                mMain.post(() -> Toast.makeText(this, "PixelRoot: Root Already Active", Toast.LENGTH_SHORT).show());
+                refreshRootStatusAndModules();
+                return;
+            }
             int rc = ExploitRunner.run(mDeCtx, this);
             String msg = rc == 0 ? "PixelRoot: SUCCESS"
                     : rc == 1 ? "PixelRoot: Error - ksud nonzero exit"
