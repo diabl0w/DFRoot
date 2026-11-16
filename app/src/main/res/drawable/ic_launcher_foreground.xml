@@ -7,16 +7,22 @@
     <!-- Outer rounded reticle ring -->
     <path
         android:strokeColor="#FFFFFF"
-        android:strokeWidth="4.2"
-        android:pathData="M54,30A24,24 0 1,1 53.99,30Z" />
-    <!-- Top, Bottom, Left, Right rounded crosshair bars -->
+        android:strokeWidth="4"
+        android:pathData="M54,32A22,22 0 1,1 53.99,32Z" />
+    <!-- Rounded crosshair ticks -->
     <path
         android:strokeColor="#FFFFFF"
-        android:strokeWidth="4.2"
+        android:strokeWidth="4"
         android:strokeLineCap="round"
-        android:pathData="M54,22L54,36 M54,72L54,86 M22,54L36,54 M72,54L86,54" />
-    <!-- Precision center dot -->
+        android:pathData="M54,24L54,37 M54,71L54,84 M24,54L37,54 M71,54L84,54" />
+    <!-- Corner framing arcs -->
+    <path
+        android:strokeColor="#8A8A8A"
+        android:strokeWidth="2.4"
+        android:strokeLineCap="round"
+        android:pathData="M28,36L28,28L36,28 M72,28L80,28L80,36 M28,72L28,80L36,80 M72,80L80,80L80,72" />
+    <!-- Center dot -->
     <path
         android:fillColor="#FFFFFF"
-        android:pathData="M54,49.5A4.5,4.5 0 1,1 53.99,49.5Z" />
+        android:pathData="M54,49.8A4.2,4.2 0 1,1 53.99,49.8Z" />
 </vector>

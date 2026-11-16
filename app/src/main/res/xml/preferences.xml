@@ -1,21 +1,43 @@
 <?xml version="1.0" encoding="utf-8"?>
 <PreferenceScreen xmlns:android="http://schemas.android.com/apk/res/android">
 
-    <SwitchPreference
-        android:key="boot_start"
-        android:title="Start at Boot"
-        android:summary="Automatically run DFRoot on device boot" />
+    <PreferenceCategory android:title="Execution &amp; Boot">
+        <SwitchPreference
+            android:key="boot_start"
+            android:title="Start at boot"
+            android:summary="Automatically run PixelRoot on device boot" />
 
-    <SwitchPreference
-        android:key="soft_reboot"
-        android:title="Auto Soft Reboot"
-        android:summary="Applies to both Manual Start and Start at Boot."
-        android:defaultValue="false" />
+        <SwitchPreference
+            android:key="soft_reboot"
+            android:title="Auto Soft Reboot"
+            android:summary="Applies to both manual start and start at boot."
+            android:defaultValue="false" />
 
-    <SwitchPreference
-        android:key="disable_modules"
-        android:title="Disable KSU Modules"
-        android:summary="Turn this on if a broken module is crashing your device. The next run will launch with all modules disabled."
-        android:defaultValue="false" />
+        <SwitchPreference
+            android:key="disable_modules"
+            android:title="Disable KSU Modules"
+            android:summary="Turn this on if a broken module is crashing your device. The next run will launch with all modules disabled."
+            android:defaultValue="false" />
+    </PreferenceCategory>
+
+    <PreferenceCategory android:title="PixelRoot Information">
+        <Preference
+            android:key="pref_app_info"
+            android:title="PixelRoot"
+            android:summary="Version 1.0.0 • Monochrome OLED Edition"
+            android:selectable="false" />
+
+        <Preference
+            android:key="pref_kernel_info"
+            android:title="Active Kernel"
+            android:summary="Detecting kernel..."
+            android:selectable="false" />
+
+        <Preference
+            android:key="pref_repo_info"
+            android:title="Repository"
+            android:summary="github.com/DeltabsoluteZero/PixelRoot-App"
+            android:selectable="false" />
+    </PreferenceCategory>
 
 </PreferenceScreen>
