@@ -525,9 +525,10 @@ static int setup(int argc, char **argv) {
             have_aes = hex_to_bytes(argv[++i], aes_key, sizeof(aes_key)) == 0;
         else { usage(argv[0]); return 2; }
     }
-    if (!encap_port || !sender_port || !spi || !have_aes) {
-        usage(argv[0]); return 2;
-    }
+    if (!encap_port)  encap_port  = 4500;
+    if (!sender_port) sender_port = 4501;
+    if (!spi)         spi         = 0x100;
+    if (!have_aes)    memset(aes_key, 0, sizeof aes_key);
 
     g_encap_port  = encap_port;
     g_sender_port = sender_port;
