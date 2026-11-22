@@ -2,7 +2,8 @@ name: Build PixelRoot APK
 
 on:
   push:
-    branches: [ master, main ]
+    branches: [ master, main, 'port/*' ]
+  pull_request:
   workflow_dispatch:
 
 jobs:
