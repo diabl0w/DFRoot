@@ -24,7 +24,11 @@
 #define OFF_VMEMMAP_BASE       0x0ULL   /* vmemmap                        */
 #define OFF_PAGE_OFFSET_BASE   0x0ULL   /* PAGE_OFFSET                    */
 
+/* Agreed across PYB110 and BRM-AN00 on 6.18.21-android17 (GKI). */
 #define CAP_FULL 0x1ffffffffffULL
+#define PAGE_OFFSET 0xffff800000000000ULL
+#define WHOWAIT     0x01000000UL
+#define CAP_HDR_MAGIC 0x20080522U
 
 static uint64_t g_kbase;
 static uint64_t g_task;
