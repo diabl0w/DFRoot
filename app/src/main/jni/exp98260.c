@@ -30,8 +30,13 @@ static uint64_t g_kbase;
 static uint64_t g_task;
 
 /* ---- kernel access (implement against the 98260 race) ------------------ */
-int kread(uint64_t kaddr, void *buf, size_t len);
-int kwrite(uint64_t kaddr, const void *buf, size_t len);
+/* Replace these bodies once the 98260 read/write primitive lands. */
+static int kread(uint64_t kaddr, void *buf, size_t len) {
+    (void)kaddr; (void)buf; (void)len; return -1;
+}
+static int kwrite(uint64_t kaddr, const void *buf, size_t len) {
+    (void)kaddr; (void)buf; (void)len; return -1;
+}
 
 static int g_primed;
 

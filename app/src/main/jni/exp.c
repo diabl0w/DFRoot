@@ -502,7 +502,7 @@ static int hex_to_bytes(const char *hex, uint8_t *out, size_t len) {
     return 0;
 }
 
-static void usage(const char *argv0) {
+__attribute__((unused)) static void usage(const char *argv0) {
     fprintf(stderr,
             "usage: %s --encap-port N --sender-port N --spi N --aes-key HEX\n", argv0);
 }
