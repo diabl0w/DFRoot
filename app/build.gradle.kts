@@ -17,11 +17,11 @@ android {
     }
 
     defaultConfig {
-        applicationId = "df.root"
+        applicationId = "com.deltabsolutezero.pixelroot"
         minSdk = 32
         targetSdk = 37
         versionCode = 407
-        versionName = "4.7"
+        versionName = "1.0.0"
 
         ndk {
             abiFilters += listOf("arm64-v8a")
@@ -29,11 +29,13 @@ android {
     }
 
     signingConfigs {
-        create("release") {
-            storeFile = file(signingProps.getProperty("KEYSTORE_FILE"))
-            storePassword = signingProps.getProperty("KEYSTORE_PASSWORD")
-            keyAlias = signingProps.getProperty("KEY_ALIAS")
-            keyPassword = signingProps.getProperty("KEY_PASSWORD")
+        if (signingProps.getProperty("KEYSTORE_FILE") != null) {
+            create("release") {
+                storeFile = file(signingProps.getProperty("KEYSTORE_FILE"))
+                storePassword = signingProps.getProperty("KEYSTORE_PASSWORD")
+                keyAlias = signingProps.getProperty("KEY_ALIAS")
+                keyPassword = signingProps.getProperty("KEY_PASSWORD")
+            }
         }
     }
 
@@ -43,7 +45,7 @@ android {
             signingConfig = signingConfigs.getByName("debug")
         }
         release {
-            signingConfig = signingConfigs.getByName("release")
+            signingConfig = signingConfigs.findByName("release") ?: signingConfigs.getByName("debug")
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
@@ -75,7 +77,7 @@ android {
 androidComponents {
     onVariants { variant ->
         variant.outputs.forEach { output ->
-            output.outputFileName.set(output.versionName.map { vn -> "DFRoot_${vn}.apk" })
+            output.outputFileName.set(output.versionName.map { vn -> "PixelRoot_${vn}.apk" })
         }
     }
 }

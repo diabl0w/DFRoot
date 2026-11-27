@@ -4,7 +4,9 @@ import android.content.ComponentName;
 import android.content.Context;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
+import android.os.Build;
 import android.os.Bundle;
+import android.preference.Preference;
 import android.preference.PreferenceFragment;
 import android.preference.SwitchPreference;
 
@@ -14,6 +16,11 @@ public class SettingsFragment extends PreferenceFragment {
     public void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         addPreferencesFromResource(R.xml.preferences);
+
+        if (getActivity() != null && getActivity().getActionBar() != null) {
+            getActivity().getActionBar().setTitle("PixelRoot Settings");
+            getActivity().getActionBar().setSubtitle("Boot & System Info");
+        }
 
         Context ctx = getActivity();
         SharedPreferences dePrefs = ctx.createDeviceProtectedStorageContext()
@@ -27,7 +34,7 @@ public class SettingsFragment extends PreferenceFragment {
         bootPref.setOnPreferenceChangeListener((pref, value) -> {
             ctx.getPackageManager().setComponentEnabledSetting(bootReceiver,
                     (Boolean) value ? PackageManager.COMPONENT_ENABLED_STATE_ENABLED
-                                    : PackageManager.COMPONENT_ENABLED_STATE_DISABLED,
+                            : PackageManager.COMPONENT_ENABLED_STATE_DISABLED,
                     PackageManager.DONT_KILL_APP);
             return true;
         });
@@ -47,5 +54,15 @@ public class SettingsFragment extends PreferenceFragment {
             dePrefs.edit().putBoolean("disable_modules", (Boolean) value).apply();
             return true;
         });
+
+        Preference appInfo = findPreference("pref_app_info");
+        if (appInfo != null) {
+            appInfo.setSummary("Version " + BuildConfig.VERSION_NAME + " • Android " + Build.VERSION.RELEASE);
+        }
+
+        Preference kernelInfo = findPreference("pref_kernel_info");
+        if (kernelInfo != null) {
+            kernelInfo.setSummary(System.getProperty("os.version", "unknown"));
+        }
     }
 }
